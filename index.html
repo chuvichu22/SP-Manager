@@ -1,0 +1,1961 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>행사자 성장관리 시스템</title>
+<!-- SheetJS(xlsx) 라이브러리: 엑셀(.xlsx/.xls) 파일을 ArrayBuffer로 읽어 파싱하기 위해 사용합니다. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* =========================================================================
+   행사자 성장관리 시스템 - 전역 스타일
+   디자인 톤: Apple 스타일 (밝은 그레이 배경 + 화이트 카드 + 블루 포인트)
+   ========================================================================= */
+:root{
+  --bg:#f5f5f7;
+  --bg-elevated:#ffffff;
+  --bg-soft:#eceef1;
+  --text:#1d1d1f;
+  --text-secondary:#6e6e73;
+  --border:rgba(0,0,0,0.08);
+  --shadow:0 2px 10px rgba(0,0,0,0.06);
+  --shadow-lg:0 8px 30px rgba(0,0,0,0.10);
+  --accent:#0071e3;
+  --accent-soft:#e8f2fe;
+  --good:#34c759;      /* 우수그룹 */
+  --good-soft:#e7f8ec;
+  --growth:#ff9f0a;     /* 성장그룹 */
+  --growth-soft:#fff3e0;
+  --improve:#ff3b30;    /* 개선그룹 */
+  --improve-soft:#ffeceb;
+  --radius:16px;
+  --radius-sm:10px;
+  --nav-w:230px;
+}
+[data-theme="dark"]{
+  --bg:#000000;
+  --bg-elevated:#1c1c1e;
+  --bg-soft:#2c2c2e;
+  --text:#f5f5f7;
+  --text-secondary:#98989d;
+  --border:rgba(255,255,255,0.1);
+  --shadow:0 2px 10px rgba(0,0,0,0.4);
+  --shadow-lg:0 8px 30px rgba(0,0,0,0.5);
+  --accent:#0a84ff;
+  --accent-soft:#0a3a63;
+  --good-soft:#0e2f18;
+  --growth-soft:#3a2a06;
+  --improve-soft:#3a1210;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","SF Pro Display","Segoe UI",Roboto,"Malgun Gothic",sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  transition:background .3s ease,color .3s ease;
+  -webkit-font-smoothing:antialiased;
+  overscroll-behavior:none;
+}
+button,input,select,textarea{font-family:inherit;}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:rgba(120,120,128,.35);border-radius:8px;}
+
+/* ---------- 레이아웃 ---------- */
+#app{display:flex;min-height:100vh;}
+.sidebar{
+  width:var(--nav-w);
+  flex-shrink:0;
+  background:var(--bg-elevated);
+  border-right:1px solid var(--border);
+  padding:20px 14px;
+  position:fixed;top:0;bottom:0;left:0;
+  overflow-y:auto;
+  z-index:100;
+  transition:transform .25s ease;
+}
+.sidebar .brand{
+  font-size:19px;font-weight:800;padding:8px 10px 18px;letter-spacing:-.3px;
+  display:flex;align-items:center;gap:8px;
+}
+.sidebar .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);display:inline-block;}
+.nav-item{
+  display:flex;align-items:center;gap:10px;
+  padding:11px 12px;border-radius:var(--radius-sm);
+  color:var(--text-secondary);font-size:14.5px;font-weight:600;
+  cursor:pointer;margin-bottom:2px;user-select:none;
+  transition:background .15s ease,color .15s ease;
+}
+.nav-item .ico{font-size:16px;width:20px;text-align:center;}
+.nav-item:hover{background:var(--bg-soft);color:var(--text);}
+.nav-item.active{background:var(--accent);color:#fff;}
+.nav-sep{height:1px;background:var(--border);margin:12px 4px;}
+.nav-footer{margin-top:auto;padding:12px 10px;}
+.theme-toggle{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 12px;border-radius:var(--radius-sm);background:var(--bg-soft);
+  font-size:13px;font-weight:600;color:var(--text-secondary);
+}
+.switch{position:relative;width:42px;height:24px;background:#c7c7cc;border-radius:20px;cursor:pointer;transition:.2s;flex-shrink:0;}
+.switch.on{background:var(--accent);}
+.switch::after{content:'';position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3);}
+.switch.on::after{left:20px;}
+
+.main{margin-left:var(--nav-w);flex:1;padding:26px 32px 80px;max-width:1400px;width:100%;}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:12px;}
+.topbar h1{font-size:26px;font-weight:800;margin:0;letter-spacing:-.4px;}
+.topbar .sub{color:var(--text-secondary);font-size:13.5px;margin-top:4px;}
+.hamburger{display:none;}
+
+/* ---------- 공통 카드/버튼 ---------- */
+.card{
+  background:var(--bg-elevated);border-radius:var(--radius);
+  border:1px solid var(--border);box-shadow:var(--shadow);
+  padding:20px;animation:fadeUp .35s ease both;
+}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.grid{display:grid;gap:16px;}
+.grid.cols-4{grid-template-columns:repeat(4,1fr);}
+.grid.cols-3{grid-template-columns:repeat(3,1fr);}
+.grid.cols-2{grid-template-columns:repeat(2,1fr);}
+@media(max-width:1100px){.grid.cols-4{grid-template-columns:repeat(2,1fr);}.grid.cols-3{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:640px){.grid.cols-4,.grid.cols-3,.grid.cols-2{grid-template-columns:1fr;}}
+
+.btn{
+  display:inline-flex;align-items:center;gap:6px;justify-content:center;
+  border:none;border-radius:980px;padding:9px 18px;font-size:13.5px;font-weight:700;
+  cursor:pointer;transition:transform .1s ease,opacity .15s ease,background .15s ease;
+  background:var(--bg-soft);color:var(--text);white-space:nowrap;
+}
+.btn:active{transform:scale(.96);}
+.btn.primary{background:var(--accent);color:#fff;}
+.btn.primary:hover{opacity:.9;}
+.btn.danger{background:var(--improve);color:#fff;}
+.btn.ghost{background:transparent;color:var(--accent);}
+.btn.sm{padding:6px 12px;font-size:12.5px;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:980px;font-size:11.5px;font-weight:700;}
+.badge.good{background:var(--good-soft);color:var(--good);}
+.badge.growth{background:var(--growth-soft);color:var(--growth);}
+.badge.improve{background:var(--improve-soft);color:var(--improve);}
+.badge.neutral{background:var(--bg-soft);color:var(--text-secondary);}
+
+input[type=text],input[type=date],input[type=number],select,textarea{
+  width:100%;padding:10px 12px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);background:var(--bg);color:var(--text);
+  font-size:13.5px;outline:none;transition:border .15s ease;
+}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);}
+label.field-label{font-size:12.5px;font-weight:700;color:var(--text-secondary);display:block;margin:0 0 6px;}
+.field{margin-bottom:14px;}
+textarea{resize:vertical;min-height:70px;}
+
+/* ---------- 대시보드 ---------- */
+.stat-card{position:relative;overflow:hidden;}
+.stat-card .label{font-size:12.5px;color:var(--text-secondary);font-weight:700;margin-bottom:8px;}
+.stat-card .value{font-size:30px;font-weight:800;letter-spacing:-.5px;}
+.stat-card .value small{font-size:15px;font-weight:700;color:var(--text-secondary);}
+.stat-card .icon{position:absolute;right:14px;top:14px;font-size:22px;opacity:.5;}
+.progress-bar{height:8px;border-radius:8px;background:var(--bg-soft);overflow:hidden;margin-top:10px;}
+.progress-bar > div{height:100%;border-radius:8px;background:var(--accent);transition:width .5s ease;}
+
+.section-title{font-size:16px;font-weight:800;margin:26px 0 12px;display:flex;align-items:center;gap:8px;}
+.section-title .cnt{font-size:12px;font-weight:700;color:var(--text-secondary);background:var(--bg-soft);padding:2px 9px;border-radius:980px;}
+
+/* 커스텀 차트 (canvas 없이 div로 구현) */
+.bar-chart{display:flex;align-items:flex-end;gap:10px;height:160px;padding-top:10px;}
+.bar-chart .bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end;}
+.bar-chart .bar{width:100%;max-width:34px;border-radius:6px 6px 2px 2px;background:var(--accent);transition:height .5s ease;position:relative;}
+.bar-chart .bar .val{position:absolute;top:-18px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;}
+.bar-chart .lbl{font-size:11px;color:var(--text-secondary);font-weight:600;}
+
+.donut-wrap{display:flex;align-items:center;gap:18px;}
+.donut{width:120px;height:120px;border-radius:50%;flex-shrink:0;
+  background:conic-gradient(var(--good) 0 var(--p1),var(--growth) var(--p1) var(--p2),var(--improve) var(--p2) 100%);
+  position:relative;
+}
+.donut::after{content:attr(data-total);position:absolute;inset:16px;background:var(--bg-elevated);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;}
+.legend-item{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:8px;}
+.legend-dot{width:10px;height:10px;border-radius:3px;}
+
+/* ---------- 리스트 / 테이블 ---------- */
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;}
+.toolbar input, .toolbar select{width:auto;min-width:150px;}
+.toolbar .grow{flex:1;min-width:200px;}
+
+.staff-table{width:100%;border-collapse:collapse;}
+.staff-table th{text-align:left;font-size:12px;color:var(--text-secondary);font-weight:700;padding:10px 12px;border-bottom:1px solid var(--border);}
+.staff-table td{padding:12px;border-bottom:1px solid var(--border);font-size:13.5px;}
+.staff-table tr.row{cursor:pointer;transition:background .12s ease;}
+.staff-table tr.row:hover{background:var(--bg-soft);}
+.staff-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+  display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;margin-right:8px;}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text-secondary);}
+.empty-state .emoji{font-size:40px;margin-bottom:10px;}
+
+/* ---------- 탭 ---------- */
+.tabs{display:flex;gap:6px;overflow-x:auto;border-bottom:1px solid var(--border);margin-bottom:18px;padding-bottom:0;}
+.tab-btn{padding:10px 14px;font-size:13.5px;font-weight:700;color:var(--text-secondary);cursor:pointer;
+  border-bottom:2px solid transparent;white-space:nowrap;}
+.tab-btn.active{color:var(--accent);border-color:var(--accent);}
+
+/* ---------- 리스트 아이템 (목표/활동/고객/메모) ---------- */
+.item-row{
+  display:flex;align-items:flex-start;gap:12px;padding:13px 14px;border-radius:var(--radius-sm);
+  background:var(--bg-soft);margin-bottom:8px;
+}
+.item-row .check{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);flex-shrink:0;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;margin-top:1px;transition:.15s;}
+.item-row .check.done{background:var(--good);border-color:var(--good);color:#fff;font-size:13px;}
+.item-row .content{flex:1;min-width:0;}
+.item-row .title{font-weight:700;font-size:13.8px;}
+.item-row .title.strike{text-decoration:line-through;color:var(--text-secondary);}
+.item-row .meta{font-size:12px;color:var(--text-secondary);margin-top:3px;}
+.item-row .actions{display:flex;gap:6px;flex-shrink:0;}
+.icon-btn{width:28px;height:28px;border-radius:50%;border:none;background:transparent;color:var(--text-secondary);
+  cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}
+.icon-btn:hover{background:var(--border);}
+
+/* ---------- 타임라인 ---------- */
+.timeline{position:relative;padding-left:26px;}
+.timeline::before{content:'';position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:var(--border);}
+.tl-item{position:relative;padding-bottom:22px;}
+.tl-item::before{content:'';position:absolute;left:-26px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--accent);border:3px solid var(--bg-elevated);box-shadow:0 0 0 2px var(--accent);}
+.tl-item .date{font-size:11.5px;color:var(--text-secondary);font-weight:700;}
+.tl-item .txt{font-size:14px;font-weight:700;margin-top:3px;}
+.tl-item .sub{font-size:12.5px;color:var(--text-secondary);margin-top:2px;}
+
+/* ---------- 모달 ---------- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(2px);
+  display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px;
+  animation:fadeIn .18s ease both;
+}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+.modal{
+  background:var(--bg-elevated);border-radius:20px;padding:24px;max-width:520px;width:100%;
+  max-height:88vh;overflow-y:auto;box-shadow:var(--shadow-lg);
+  animation:modalIn .22s cubic-bezier(.2,.9,.3,1) both;
+}
+@keyframes modalIn{from{opacity:0;transform:translateY(14px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
+.modal h2{margin:0 0 18px;font-size:18px;font-weight:800;}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;}
+
+/* ---------- 체크리스트 ---------- */
+.checklist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
+@media(max-width:640px){.checklist-grid{grid-template-columns:1fr;}}
+.chk-item{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--bg-soft);border-radius:var(--radius-sm);cursor:pointer;user-select:none;}
+.chk-item input{width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;}
+.chk-item span{font-size:13.5px;font-weight:600;}
+.report-box{
+  white-space:pre-wrap;background:var(--bg-soft);border-radius:var(--radius-sm);padding:16px;
+  font-size:14px;line-height:1.75;margin-top:14px;min-height:100px;
+}
+
+/* ---------- AI 코칭 카드 ---------- */
+.coach-block{margin-bottom:14px;}
+.coach-block h4{margin:0 0 6px;font-size:13px;color:var(--accent);font-weight:800;}
+.coach-block p{margin:0;font-size:13.5px;line-height:1.6;}
+
+/* ---------- 토스트 ---------- */
+#toast{
+  position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:#1d1d1f;color:#fff;padding:12px 20px;border-radius:980px;font-size:13.5px;font-weight:600;
+  opacity:0;pointer-events:none;transition:.25s;z-index:2000;box-shadow:var(--shadow-lg);
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ---------- 반응형: 모바일 ---------- */
+@media(max-width:900px){
+  .sidebar{transform:translateX(-100%);width:250px;}
+  .sidebar.open{transform:translateX(0);}
+  .main{margin-left:0;padding:20px 16px 90px;}
+  .hamburger{display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;
+    background:var(--bg-elevated);border:1px solid var(--border);cursor:pointer;font-size:18px;}
+  .sidebar-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99;display:none;}
+  .sidebar-backdrop.show{display:block;}
+}
+.hide{display:none !important;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="UI.closeSidebar()"></div>
+  <nav class="sidebar" id="sidebar">
+    <div class="brand"><span class="dot"></span>샘표 전남 유인행사</div>
+    <div class="nav-item" data-route="dashboard"><span class="ico">📊</span>대시보드</div>
+    <div class="nav-item" data-route="staff"><span class="ico">👥</span>행사자 관리</div>
+    <div class="nav-item" data-route="data"><span class="ico">🗂️</span>자료 관리</div>
+    <div class="nav-sep"></div>
+    <div class="nav-footer">
+      <div class="theme-toggle" onclick="UI.toggleTheme()">
+        <span id="themeLabel">다크 모드</span>
+        <div class="switch" id="themeSwitch"></div>
+      </div>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div class="hamburger" onclick="UI.openSidebar()">☰</div>
+        <div>
+          <h1 id="pageTitle">대시보드</h1>
+          <div class="sub" id="pageSub">전남지점 행사자 현황을 한눈에 확인하세요</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div id="ymSelector"></div>
+        <div id="topbarActions"></div>
+      </div>
+    </div>
+    <div id="view"></div>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toast"></div>
+
+<script>
+/* =========================================================================
+   행사자 성장관리 시스템 - 애플리케이션 스크립트
+   구조: DB(localStorage) -> Router -> View 렌더러 -> CRUD 핸들러
+   추후 기능 추가가 쉽도록 App 네임스페이스 하나로 모듈화했습니다.
+   ========================================================================= */
+const App = {};
+
+/* ------------------------- 1. 데이터베이스 계층 ------------------------- */
+App.DB_KEY = 'promoterGrowthDB_v1';
+App.THEME_KEY = 'promoterGrowthTheme_v1';
+
+App.defaultDB = function(){
+  return {
+    staff: [],
+    records: [], // 샘표 전남지역 유인행사 실적 레코드 (엑셀 Import 결과, 행 단위 원본 데이터)
+    meta:{ lastBackup:null, schemaVersion:2 }
+  };
+};
+
+App.load = function(){
+  try{
+    const raw = localStorage.getItem(App.DB_KEY);
+    App.db = raw ? JSON.parse(raw) : App.defaultDB();
+    if(!App.db.staff) App.db.staff = [];
+    if(!App.db.meta) App.db.meta = { lastBackup:null, schemaVersion:2 };
+    // 스키마 마이그레이션: 이전 버전(날짜/매장명 기반 salesRecords)이 남아있으면
+    // 새 컬럼 구조(YEAR/MONTH/품목군)와 호환되지 않으므로 한 번만 정리합니다.
+    if(App.db.meta.schemaVersion !== 2){
+      App.db.records = [];
+      App.db.meta.schemaVersion = 2;
+    }
+    if(!App.db.records) App.db.records = [];
+  }catch(e){
+    console.error('DB 로드 실패, 초기화합니다.', e);
+    App.db = App.defaultDB();
+  }
+  App._rebuildRecordIndex();
+};
+
+// 선택된 YEAR-MONTH 등 전역 UI 상태 (localStorage에 별도 저장하여 새로고침해도 유지)
+App.STATE_KEY = 'promoterGrowthState_v1';
+App.loadState = function(){
+  try{
+    App.state = JSON.parse(localStorage.getItem(App.STATE_KEY)) || {};
+  }catch(e){ App.state = {}; }
+  if(!App.state.selectedYM) App.state.selectedYM = null; // null이면 최신월 자동 선택
+};
+App.saveState = function(){
+  localStorage.setItem(App.STATE_KEY, JSON.stringify(App.state));
+};
+
+// records를 YEAR-MONTH별로 미리 그룹핑해두는 캐시 (5만건 이상에서도 빠르게 필터링하기 위함)
+App._rebuildRecordIndex = function(){
+  App._byYM = {};
+  App._allYMs = [];
+  const ymSet = new Set();
+  App.db.records.forEach(r=>{
+    if(!App._byYM[r.ym]) App._byYM[r.ym] = [];
+    App._byYM[r.ym].push(r);
+    ymSet.add(r.ym);
+  });
+  App._allYMs = [...ymSet].sort(); // 오름차순 (예: 2026-01, 2026-02, ...)
+};
+
+App.save = function(){
+  localStorage.setItem(App.DB_KEY, JSON.stringify(App.db));
+  // 간단한 자동 백업본도 별도 키에 보관 (직전 저장본 1개 보관)
+  localStorage.setItem(App.DB_KEY + '_backup', JSON.stringify(App.db));
+};
+
+App.uid = function(prefix){
+  return (prefix||'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+};
+
+/* ------------------------- 2. 유틸리티 ------------------------- */
+App.util = {
+  todayStr(){ const d=new Date(); return d.toISOString().slice(0,10); },
+  monthKey(d){ d = d? new Date(d): new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); },
+  monthLabel(mk){ const [y,m]=mk.split('-'); return `${y}년 ${parseInt(m)}월`; },
+  fmtDate(s){ if(!s) return '-'; return s; },
+  esc(s){ if(s===undefined||s===null) return ''; return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
+  clamp(n,a,b){ return Math.max(a,Math.min(b,n)); },
+  seededRandom(seedStr){
+    // 문자열 시드를 이용한 결정적 랜덤 (같은 날짜/입력이면 같은 결과)
+    let h = 0;
+    for(let i=0;i<seedStr.length;i++){ h = (h*31 + seedStr.charCodeAt(i)) >>> 0; }
+    return function(){ h = (h*1103515245 + 12345) >>> 0; return (h % 1000)/1000; };
+  },
+  pick(arr, rnd){ return arr[Math.floor(rnd()*arr.length) % arr.length]; },
+  toast(msg){
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(App._toastTimer);
+    App._toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+  },
+  monthsOfYear(){ return ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']; },
+  currentMonthNum(){ return new Date().getMonth()+1; },
+  avg(arr){ if(!arr.length) return 0; return arr.reduce((a,b)=>a+b,0)/arr.length; },
+
+  /* ---- 엑셀 Import 전용: 날짜/숫자 파싱 유틸 ----
+     실제 매장 엑셀은 셀 형식이 제각각(엑셀 날짜 시리얼 번호, "2026.7.15", "7/15", 일자만 있는 "15" 등)이라
+     최대한 관대하게(lenient) 파싱하고, 그래도 실패하면 null을 반환해 호출 측에서 해당 행을 건너뛰게 합니다. */
+  excelSerialToDate(serial){
+    // 엑셀(1900 날짜 시스템) 시리얼 번호 -> JS Date 변환
+    const utcDays = Math.floor(serial - 25569);
+    const utcMs = utcDays * 86400 * 1000;
+    return new Date(utcMs);
+  },
+  formatDateObj(d){
+    if(!(d instanceof Date) || isNaN(d.getTime())) return null;
+    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  },
+  normalizeExcelDate(value, monthHint){
+    // monthHint: 값이 "일(day)"만 담고 있을 때 사용할 시트 기준 월(1~12)
+    if(value===undefined || value===null || value==='') return null;
+    if(value instanceof Date) return App.util.formatDateObj(value);
+    if(typeof value === 'number'){
+      if(value>=1 && value<=31 && monthHint){
+        const y = new Date().getFullYear();
+        return App.util.formatDateObj(new Date(y, monthHint-1, Math.round(value)));
+      }
+      return App.util.formatDateObj(App.util.excelSerialToDate(value));
+    }
+    const str = String(value).trim();
+    if(!str) return null;
+    // "15", "15일" 처럼 일자만 있는 경우
+    const dayOnly = str.match(/^(\d{1,2})\s*일?$/);
+    if(dayOnly && monthHint){
+      const y = new Date().getFullYear();
+      return App.util.formatDateObj(new Date(y, monthHint-1, parseInt(dayOnly[1],10)));
+    }
+    // "2026년 7월 15일", "2026.7.15", "2026/7/15", "2026-7-15" 등 구분자 정규화
+    let normalized = str.replace(/년|월/g,'-').replace(/일$/,'').replace(/[.\/]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+    let d = new Date(normalized);
+    if(!isNaN(d.getTime())) return App.util.formatDateObj(d);
+    d = new Date(str);
+    if(!isNaN(d.getTime())) return App.util.formatDateObj(d);
+    return null;
+  },
+  parseNumberLoose(v){
+    // "1,250,000", "1250000원", " 1250000 " 등을 모두 숫자로 인식
+    if(v===undefined || v===null || v==='') return 0;
+    if(typeof v === 'number') return v;
+    const cleaned = String(v).replace(/[,원%\s]/g,'');
+    const n = parseFloat(cleaned);
+    return isNaN(n) ? 0 : n;
+  },
+  parsePercentLoose(v){
+    // "92", "92%", "0.92" 모두 92(%)로 인식. 값이 없으면 null
+    if(v===undefined || v===null || v==='') return null;
+    if(typeof v === 'number') return v<=1 ? Math.round(v*100) : Math.round(v);
+    const hadPercentSign = String(v).indexOf('%')>=0;
+    const cleaned = String(v).replace(/[%\s]/g,'');
+    const n = parseFloat(cleaned);
+    if(isNaN(n)) return null;
+    return (n<=1 && !hadPercentSign) ? Math.round(n*100) : Math.round(n);
+  },
+  // ★ 검증된 계산 로직 전용: 엑셀 "달성률" 컬럼은 항상 소수(비율)로 저장되어 있습니다.
+  //   (예: 0.616688 → 61.6688%, 1.260495 → 126.0495%, 7.226703 → 722.6703%)
+  //   parsePercentLoose와 달리 값의 크기와 상관없이 "항상 ×100" 합니다 (100% 초과 달성률도 정확히 인식).
+  //   또한 나중에 평균을 낸 후 한 번만 반올림하도록, 여기서는 반올림하지 않고 원값을 그대로 반환합니다.
+  parseAchievementRate(v){
+    if(v===undefined || v===null || v==='') return null;
+    if(typeof v === 'number') return v*100;
+    const hadPercentSign = String(v).indexOf('%')>=0;
+    const cleaned = String(v).replace(/[%\s,]/g,'');
+    const n = parseFloat(cleaned);
+    if(isNaN(n)) return null;
+    return hadPercentSign ? n : n*100;
+  }
+};
+
+/* ------------------------- 2-1. 엑셀 컬럼 자동인식(퍼지 매칭) 설정 -------------------------
+   엑셀 헤더명이 매번 바뀔 수 있으므로, 열 번호가 아니라 "헤더 텍스트"를 기준으로
+   아래 표준 필드(canonical field)에 매칭시킵니다. 자동 인식에 실패하면 사용자가
+   직접 매핑할 수 있는 모달을 띄우고, 그 결과를 App.db.columnMapping에 기억해둡니다. */
+App.canonFields = [
+  {key:'staffName', label:'행사자명', aliases:['행사자명','사원명','이름','행사자','성명','담당자']},
+  {key:'date',      label:'날짜',    aliases:['날짜','일자','방문일','등록일','행사일']},
+  {key:'store',     label:'매장명',  aliases:['매장명','매장','점포명','점포','지점']},
+  {key:'sales',     label:'매출',    aliases:['매출','총매출','판매금액','매출액','실적']},
+  {key:'target',    label:'목표',    aliases:['목표','목표금액','목표매출']},
+  {key:'achievementRate', label:'달성률', aliases:['달성률','달성율','달성퍼센트','달성%']}
+];
+App.util.normalizeHeaderStr = function(s){
+  return String(s||'').replace(/[\s()\[\]%_·\-]/g,'').toLowerCase();
+};
+App.util.guessCanonForHeader = function(header){
+  const nh = App.util.normalizeHeaderStr(header);
+  if(!nh) return null;
+  for(const f of App.canonFields){
+    for(const alias of f.aliases){
+      const na = App.util.normalizeHeaderStr(alias);
+      if(nh===na || nh.includes(na) || na.includes(nh)) return f.key;
+    }
+  }
+  return null;
+};
+
+/* ------------------------- 3. 실적 집계 & 그룹(우수/성장/개선) 자동 분류 -------------------------
+   ★★★ 검증 완료된 계산 로직입니다. 실제 엑셀 데이터로 5명을 직접 대조 검증했습니다. ★★★
+   이후 기능을 추가하거나 UI를 바꾸더라도 아래 계산 방식은 절대 변경하지 마세요.
+
+   - 평균달성률: 엑셀 "달성률" 컬럼(이미 계산된 최종값)의 평균입니다.
+     총판매금액 ÷ 목표로 재계산하지 않습니다 (import 단계에서도 재계산 금지).
+   - 16만원 미만: 총판매금액 < 160000
+   - 목표미달: 총판매금액 < 목표 (달성률이 아니라 금액을 직접 비교)
+   - 그룹 분류 (누적 행사일수 10일 미만은 "제외"):
+       우수: 평균달성률 125% 이상 AND 16만원 미만 비율 35% 이하
+       성장: 평균달성률  95% 이상 AND 16만원 미만 비율 60% 이하
+       개선: 평균달성률  95% 미만 OR  16만원 미만 비율 60% 초과
+
+   ★ 목적: "행사자 매출 관리" - 시간이 지나며 등급이 어떻게 변해왔는지 추적하는 것입니다.
+   그래서 대시보드/행사자목록/배지 등 핵심 지표는 "선택한 YEAR-MONTH까지의 누적(YTD)" 기준으로 계산합니다.
+   반면 "월별 성과" 표처럼 그 달 하나만의 실적을 봐야 하는 곳은 "단일 월 집계"(App.getMonthlyAgg)를 사용합니다.
+   두 집계 모두 App._aggCache / App._cumAggCache에 캐시하여 대량 레코드에서도 빠르게 동작합니다. */
+App._aggCache = {};
+App._cumAggCache = {};
+
+App.invalidateAggCache = function(){
+  App._aggCache = {};
+  App._cumAggCache = {};
+};
+
+App._classifyGroup = function(a){
+  if(a.days < 10) return '제외';
+  if(a.avgRate>=125 && a.under16Pct<=35) return '우수';
+  if(a.avgRate>=95 && a.under16Pct<=60) return '성장';
+  return '개선';
+};
+
+// 레코드 배열로부터 행사자별 집계(byStaff)와 전체 집계(overall)를 계산하는 공용 내부 함수
+App._aggregateRecords = function(records){
+  const byStaff = {};
+  records.forEach(r=>{
+    if(!byStaff[r.staffName]){
+      byStaff[r.staffName] = { days:0, totalTarget:0, totalSales:0, rateSum:0, under16Count:0, missCount:0 };
+    }
+    const a = byStaff[r.staffName];
+    a.days++;
+    a.totalTarget += Number(r.target)||0;
+    a.totalSales += Number(r.totalSales)||0;
+    a.rateSum += Number(r.achievementRate)||0; // 엑셀 달성률 컬럼값 그대로 사용 (재계산 금지)
+    if(Number(r.totalSales) < 160000) a.under16Count++;
+    if(Number(r.totalSales) < Number(r.target)) a.missCount++; // 목표미달 = 금액 직접 비교
+  });
+
+  const names = Object.keys(byStaff);
+  names.forEach(name=>{
+    const a = byStaff[name];
+    a.avgRate = a.days ? Math.round(a.rateSum/a.days) : 0;
+    a.under16Pct = a.days ? Math.round(a.under16Count/a.days*100) : 0;
+    a.missPct = a.days ? Math.round(a.missCount/a.days*100) : 0;
+    a.group = App._classifyGroup(a);
+  });
+
+  const graded = names.filter(n=>byStaff[n].group!=='제외');
+  const overall = {
+    totalStaff: names.length,
+    good: names.filter(n=>byStaff[n].group==='우수').length,
+    growth: names.filter(n=>byStaff[n].group==='성장').length,
+    improve: names.filter(n=>byStaff[n].group==='개선').length,
+    excluded: names.filter(n=>byStaff[n].group==='제외').length,
+    avgRate: graded.length ? Math.round(App.util.avg(graded.map(n=>byStaff[n].avgRate))) : 0,
+    totalTarget: names.reduce((s,n)=>s+byStaff[n].totalTarget,0),
+    totalSales: names.reduce((s,n)=>s+byStaff[n].totalSales,0)
+  };
+  return { byStaff, overall };
+};
+
+// 선택한 월 "하나만"의 집계 (월별 성과 표에서 사용)
+App.getMonthlyAgg = function(ym){
+  if(!ym) return { byStaff:{}, overall:{ totalStaff:0, good:0, growth:0, improve:0, excluded:0, avgRate:0, totalTarget:0, totalSales:0 } };
+  if(App._aggCache[ym]) return App._aggCache[ym];
+  const result = App._aggregateRecords(App._byYM[ym] || []);
+  App._aggCache[ym] = result;
+  return result;
+};
+
+// 선택한 월까지의 "누적(YTD)" 집계 (대시보드/행사자목록/누적현황 등 핵심 지표에서 사용)
+App.getCumulativeAgg = function(ym){
+  if(!ym) return { byStaff:{}, overall:{ totalStaff:0, good:0, growth:0, improve:0, excluded:0, avgRate:0, totalTarget:0, totalSales:0 } };
+  if(App._cumAggCache[ym]) return App._cumAggCache[ym];
+  const records = App.db.records.filter(r=>r.ym<=ym); // 시작 시점부터 선택한 월까지 전부 합산
+  const result = App._aggregateRecords(records);
+  App._cumAggCache[ym] = result;
+  return result;
+};
+
+// 이전 이름 호환용: 기존 코드에서 참조하던 이름을 "단일 월" 집계로 유지
+App.getAggForYM = App.getMonthlyAgg;
+
+// 특정 행사자 이름의 특정 월 "단일 월" 집계 (없으면 기본값)
+App.getStaffAgg = function(staffName, ym){
+  const agg = App.getMonthlyAgg(ym);
+  return agg.byStaff[staffName] || { days:0, totalTarget:0, totalSales:0, avgRate:0, under16Count:0, under16Pct:0, missCount:0, missPct:0, group:'제외' };
+};
+
+// 특정 행사자 이름의 특정 월까지 "누적" 집계 (없으면 기본값)
+App.getStaffCumulativeAgg = function(staffName, ym){
+  const agg = App.getCumulativeAgg(ym);
+  return agg.byStaff[staffName] || { days:0, totalTarget:0, totalSales:0, avgRate:0, under16Count:0, under16Pct:0, missCount:0, missPct:0, group:'제외' };
+};
+
+App.groupMeta = function(g){
+  if(g==='우수') return {cls:'good', label:'우수그룹'};
+  if(g==='성장') return {cls:'growth', label:'성장그룹'};
+  if(g==='개선') return {cls:'improve', label:'개선그룹'};
+  return {cls:'neutral', label:'집계제외(10일 미만)'};
+};
+
+/* ------------------------- 4. 라우터 ------------------------- */
+App.route = { name:'dashboard', staffId:null, tab:'goal' };
+
+App.navigate = function(name, staffId, tab){
+  App.route = { name, staffId: staffId||null, tab: tab||'goal' };
+  location.hash = '#/' + name + (staffId ? '/'+staffId + (tab? '/'+tab:'') : '');
+  UI.render();
+};
+
+window.addEventListener('hashchange', ()=>{
+  const parts = location.hash.replace('#/','').split('/').filter(Boolean);
+  App.route = { name: parts[0]||'dashboard', staffId: parts[1]||null, tab: parts[2]||'goal' };
+  UI.render();
+});
+
+/* ------------------------- 5. UI 컨트롤러 ------------------------- */
+const UI = {};
+
+UI.init = function(){
+  App.load();
+  App.loadState();
+  // 테마
+  const theme = localStorage.getItem(App.THEME_KEY) || 'light';
+  document.documentElement.setAttribute('data-theme', theme);
+  UI.syncThemeSwitch();
+  // 네비게이션 클릭
+  document.querySelectorAll('.nav-item').forEach(el=>{
+    el.addEventListener('click', ()=>{ App.navigate(el.dataset.route); UI.closeSidebar(); });
+  });
+  UI.renderYmSelector();
+  const parts = location.hash.replace('#/','').split('/').filter(Boolean);
+  App.route = { name: parts[0]||'dashboard', staffId: parts[1]||null, tab: parts[2]||'goal' };
+  UI.render();
+};
+
+// 상단 고정 YEAR-MONTH 선택 드롭다운을 그림 (records에 존재하는 월만 선택지로 노출)
+UI.renderYmSelector = function(){
+  const el = document.getElementById('ymSelector');
+  if(!el) return;
+  if(App._allYMs.length===0){
+    el.innerHTML = `<span style="font-size:12.5px;color:var(--text-secondary);">업로드된 실적 데이터 없음</span>`;
+    return;
+  }
+  if(!App.state.selectedYM || !App._allYMs.includes(App.state.selectedYM)){
+    App.state.selectedYM = App._allYMs[App._allYMs.length-1]; // 최신월 기본 선택
+    App.saveState();
+  }
+  const options = [...App._allYMs].reverse().map(ym=>
+    `<option value="${ym}" ${ym===App.state.selectedYM?'selected':''}>${ym}</option>`
+  ).join('');
+  el.innerHTML = `<select id="ymSelectInput" style="font-weight:700;">${options}</select>`;
+  document.getElementById('ymSelectInput').onchange = function(){
+    App.state.selectedYM = this.value;
+    App.saveState();
+    UI.render();
+  };
+};
+
+UI.toggleTheme = function(){
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur==='dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem(App.THEME_KEY, next);
+  UI.syncThemeSwitch();
+};
+UI.syncThemeSwitch = function(){
+  const isDark = document.documentElement.getAttribute('data-theme')==='dark';
+  document.getElementById('themeSwitch').classList.toggle('on', isDark);
+  document.getElementById('themeLabel').textContent = isDark? '라이트 모드':'다크 모드';
+};
+UI.openSidebar = function(){ document.getElementById('sidebar').classList.add('open'); document.getElementById('sidebarBackdrop').classList.add('show'); };
+UI.closeSidebar = function(){ document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarBackdrop').classList.remove('show'); };
+
+UI.setActiveNav = function(name){
+  document.querySelectorAll('.nav-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.route===name);
+  });
+};
+
+UI.setTitle = function(title, sub){
+  document.getElementById('pageTitle').textContent = title;
+  document.getElementById('pageSub').textContent = sub||'';
+};
+
+UI.setTopActions = function(html){
+  document.getElementById('topbarActions').innerHTML = html || '';
+};
+
+UI.render = function(){
+  const r = App.route;
+  UI.setActiveNav(r.name==='staffDetail' ? 'staff' : r.name);
+  UI.setTopActions('');
+  UI.renderYmSelector();
+  if(r.name==='dashboard') Views.dashboard();
+  else if(r.name==='staff' && !r.staffId) Views.staffList();
+  else if((r.name==='staff'||r.name==='staffDetail') && r.staffId) Views.staffDetail(r.staffId, r.tab);
+  else if(r.name==='data') Views.dataManage();
+  else Views.dashboard();
+};
+
+/* ------------------------- 6. 모달 헬퍼 ------------------------- */
+UI.openModal = function(innerHtml){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `<div class="modal-overlay" id="modalOverlay"><div class="modal">${innerHtml}</div></div>`;
+  document.getElementById('modalOverlay').addEventListener('click', (e)=>{
+    if(e.target.id==='modalOverlay') UI.closeModal();
+  });
+};
+UI.closeModal = function(){ document.getElementById('modalRoot').innerHTML=''; };
+
+/* ------------------------- 7. 간단 차트 렌더러 (외부 라이브러리 없이 div로 구현) ------------------------- */
+App.chart = {};
+App.chart.bar = function(labels, values, opts){
+  opts = opts||{};
+  const max = Math.max(1, ...values, opts.max||0);
+  let html = '<div class="bar-chart">';
+  labels.forEach((lbl,i)=>{
+    const v = values[i]||0;
+    const h = Math.max(3, Math.round((v/max)*120));
+    html += `<div class="bar-col">
+        <div class="bar" style="height:${h}px;background:${opts.color||'var(--accent)'}"><span class="val">${v}${opts.suffix||''}</span></div>
+        <div class="lbl">${App.util.esc(lbl)}</div>
+      </div>`;
+  });
+  html += '</div>';
+  return html;
+};
+
+/* ------------------------- 8. VIEWS: 화면별 렌더러 ------------------------- */
+const Views = {};
+
+/* === 8-1. 대시보드 === */
+Views._dashSearch = '';
+Views._dashOpenGroups = { '우수':true, '성장':false, '개선':false };
+
+Views.dashboard = function(){
+  const ym = App.state.selectedYM;
+  UI.setTitle('대시보드', ym? `${ym}까지 누적 실적 현황입니다` : '엑셀을 업로드하면 실적 현황이 표시됩니다');
+
+  let html = `<div class="card">
+    <div class="toolbar">
+      <div class="field" style="margin-bottom:0;flex:1;min-width:220px;">
+        <label class="field-label">엑셀 업로드 (.xlsx)</label>
+        <input type="file" accept=".xlsx,.xls" onchange="Actions.importRecordsExcel(this.files[0]); this.value='';">
+      </div>
+      <div class="field" style="margin-bottom:0;flex:1;min-width:220px;">
+        <label class="field-label">행사자 검색</label>
+        <input type="text" placeholder="이름으로 검색 (예: 김)" value="${App.util.esc(Views._dashSearch)}" oninput="Views._dashSearch=this.value;UI.render()">
+      </div>
+    </div>
+  </div>`;
+
+  if(Views._dashSearch.trim()){
+    const q = Views._dashSearch.trim();
+    const matches = App.db.staff.filter(s=>s.name.includes(q));
+    html += `<div class="section-title">검색 결과 <span class="cnt">${matches.length}</span></div>`;
+    if(matches.length===0){
+      html += `<div class="card empty-state"><div class="emoji">🔍</div>'${App.util.esc(q)}'와(과) 일치하는 행사자가 없습니다.</div>`;
+    }else{
+      html += '<div class="card" style="padding:8px 12px;">';
+      matches.forEach(s=>{
+        const a = App.getStaffCumulativeAgg(s.name, ym);
+        const gm = App.groupMeta(a.group);
+        html += `<div class="item-row" style="background:transparent;cursor:pointer;" onclick="App.navigate('staffDetail','${s.id}')">
+          <div class="staff-avatar">${App.util.esc(s.name[0]||'?')}</div>
+          <div class="content"><div class="title">${App.util.esc(s.name)}</div><div class="meta">누적 평균달성률 ${a.avgRate}% · 누적 행사일수 ${a.days}일</div></div>
+          <span class="badge ${gm.cls}">${gm.label}</span>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    document.getElementById('view').innerHTML = html;
+    return;
+  }
+
+  if(!ym){
+    html += `<div class="card empty-state">
+      <div class="emoji">📤</div>업로드된 실적 데이터가 없습니다. 위에서 엑셀(.xlsx)을 업로드해주세요.
+    </div>`;
+    document.getElementById('view').innerHTML = html;
+    return;
+  }
+
+  const { byStaff, overall } = App.getCumulativeAgg(ym); // 선택한 월까지 누적(YTD) 기준
+  const total = overall.totalStaff;
+
+  html += `<div class="grid cols-4" style="margin-top:16px;">
+    <div class="card stat-card"><div class="icon">👥</div><div class="label">전체 행사자 (~${ym})</div><div class="value">${total}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="icon">🏆</div><div class="label">우수 그룹</div><div class="value" style="color:var(--good)">${overall.good}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="icon">🌱</div><div class="label">성장 그룹</div><div class="value" style="color:var(--growth)">${overall.growth}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="icon">⚠️</div><div class="label">개선 그룹</div><div class="value" style="color:var(--improve)">${overall.improve}<small> 명</small></div></div>
+  </div>`;
+  if(overall.excluded){
+    html += `<div style="font-size:12.5px;color:var(--text-secondary);margin-top:8px;">제외 ${overall.excluded}명 (누적 행사일수 10일 미만)</div>`;
+  }
+
+  ['우수','성장','개선'].forEach(g=>{
+    const names = Object.keys(byStaff).filter(n=>byStaff[n].group===g).sort((a,b)=>byStaff[b].avgRate-byStaff[a].avgRate);
+    const gm = App.groupMeta(g);
+    const open = Views._dashOpenGroups[g];
+    html += `<div class="section-title" style="cursor:pointer;user-select:none;" onclick="Views._dashOpenGroups['${g}']=!Views._dashOpenGroups['${g}'];UI.render()">
+      <span class="badge ${gm.cls}">${gm.label}</span> <span class="cnt">${names.length}명</span>
+      <span style="margin-left:auto;color:var(--text-secondary);font-size:12px;">${open?'▲ 접기':'▼ 펼치기'}</span>
+    </div>`;
+    if(open){
+      if(names.length===0){
+        html += `<div class="card empty-state"><div class="emoji">🙋</div>${gm.label}에 해당하는 행사자가 없습니다.</div>`;
+      }else{
+        html += '<div class="card" style="padding:8px 12px;">';
+        names.forEach(name=>{
+          const s = App.db.staff.find(x=>x.name===name);
+          const a = byStaff[name];
+          html += `<div class="item-row" style="background:transparent;cursor:pointer;" onclick="App.navigate('staffDetail','${s?s.id:''}')">
+            <div class="staff-avatar">${App.util.esc(name[0]||'?')}</div>
+            <div class="content"><div class="title">${App.util.esc(name)}</div><div class="meta">누적 평균달성률 ${a.avgRate}% · 누적 행사일수 ${a.days}일</div></div>
+          </div>`;
+        });
+        html += '</div>';
+      }
+    }
+  });
+
+  document.getElementById('view').innerHTML = html;
+};
+
+/* === 8-2. 행사자 목록 === */
+Views._staffFilter = { q:'', store:'', group:'' };
+
+Views.staffList = function(){
+  const ym = App.state.selectedYM;
+  UI.setTitle('행사자 관리', ym? `${ym}까지 누적 실적 집계입니다` : '엑셀 업로드 후 실적이 표시됩니다');
+  UI.setTopActions(`<button class="btn primary" onclick="Actions.openStaffForm()">+ 행사자 추가</button>`);
+
+  const f = Views._staffFilter;
+  const { byStaff } = App.getCumulativeAgg(ym); // 선택한 월까지 누적 기준
+
+  let list = App.db.staff.filter(s=>{
+    if(f.q && !s.name.includes(f.q)) return false; // 부분검색(자동선택 없음, 목록에서 클릭해서 이동)
+    if(f.group){
+      const g = (byStaff[s.name]||{}).group || '제외';
+      if(g!==f.group) return false;
+    }
+    return true;
+  });
+
+  let html = `<div class="card">
+    <div class="toolbar">
+      <input class="grow" type="text" placeholder="행사자명 부분검색 (예: 김)" value="${App.util.esc(f.q)}" oninput="Views._staffFilter.q=this.value;Views.staffList()">
+      <select onchange="Views._staffFilter.group=this.value;Views.staffList()">
+        <option value="">전체 그룹</option>
+        <option value="우수" ${f.group==='우수'?'selected':''}>우수그룹</option>
+        <option value="성장" ${f.group==='성장'?'selected':''}>성장그룹</option>
+        <option value="개선" ${f.group==='개선'?'selected':''}>개선그룹</option>
+        <option value="제외" ${f.group==='제외'?'selected':''}>집계제외(누적 10일미만)</option>
+      </select>
+    </div>`;
+
+  if(!ym){
+    html += `<div class="empty-state"><div class="emoji">📤</div>업로드된 실적 데이터가 없습니다. '자료 관리'에서 엑셀을 업로드해주세요.</div>`;
+  }else if(list.length===0){
+    html += `<div class="empty-state"><div class="emoji">🔍</div>조건에 맞는 행사자가 없습니다.</div>`;
+  }else{
+    html += `<div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>이름</th><th>누적 행사일수</th><th>누적 평균달성률</th><th>16만원미만</th><th>목표미달</th><th>그룹</th><th></th>
+    </tr></thead><tbody>`;
+    list.forEach(s=>{
+      const a = byStaff[s.name] || {days:0,avgRate:0,under16Count:0,under16Pct:0,missCount:0,missPct:0,group:'제외'};
+      const gm = App.groupMeta(a.group);
+      html += `<tr class="row" onclick="App.navigate('staffDetail','${s.id}')">
+        <td><span class="staff-avatar">${App.util.esc(s.name[0]||'?')}</span>${App.util.esc(s.name)}</td>
+        <td>${a.days}일</td>
+        <td>${a.avgRate}%</td>
+        <td>${a.under16Count}회 (${a.under16Pct}%)</td>
+        <td>${a.missCount}회 (${a.missPct}%)</td>
+        <td><span class="badge ${gm.cls}">${gm.label}</span></td>
+        <td onclick="event.stopPropagation()">
+          <button class="icon-btn" title="수정" onclick="Actions.openStaffForm('${s.id}')">✏️</button>
+          <button class="icon-btn" title="삭제" onclick="Actions.deleteStaff('${s.id}')">🗑️</button>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  document.getElementById('view').innerHTML = html;
+};
+
+/* === 8-3. 행사자 상세 페이지 (탭 구조) === */
+Views.staffDetail = function(staffId, tab){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  if(!s){ Views.staffList(); return; }
+  s.goals = s.goals||[]; s.customers = s.customers||[]; s.memos = s.memos||[];
+  s.visitLogs = s.visitLogs||[]; // 관리자 활동이력 (방문일/매장명/체크리스트/메모)
+
+  const ym = App.state.selectedYM;
+  const agg = App.getStaffCumulativeAgg(s.name, ym);
+  const gm = App.groupMeta(agg.group);
+  UI.setTitle(s.name, `${s.store||'-'} · ${s.type||'-'} · 입사일 ${s.hireDate||'-'}`);
+  UI.setTopActions(`<span class="badge ${gm.cls}" style="margin-right:8px;">${ym?`~${ym} 누적 `:''}${gm.label}</span>
+    <button class="btn sm" onclick="App.navigate('staff')">← 목록</button>
+    <button class="btn sm" onclick="Actions.openStaffForm('${s.id}')">✏️ 정보수정</button>`);
+
+  const tabs = [
+    ['cumulative','누적 현황'], ['monthly','월별 성과'], ['visitlog','활동 이력'], ['activitystats','활동 통계'],
+    ['goal','개인 목표'], ['customer','충성고객'], ['memo','관리자 메모'],
+    ['report','성장 리포트'], ['ai','AI 코칭']
+  ];
+  let html = `<div class="tabs">`;
+  tabs.forEach(([key,label])=>{
+    html += `<div class="tab-btn ${tab===key?'active':''}" onclick="App.navigate('staffDetail','${s.id}','${key}')">${label}</div>`;
+  });
+  html += `</div><div id="tabBody"></div>`;
+  document.getElementById('view').innerHTML = html;
+
+  const body = document.getElementById('tabBody');
+  if(tab==='goal') body.innerHTML = Views._tabGoal(s);
+  else if(tab==='cumulative') body.innerHTML = Views._tabCumulative(s);
+  else if(tab==='monthly') body.innerHTML = Views._tabMonthly(s);
+  else if(tab==='visitlog') body.innerHTML = Views._tabVisitLog(s);
+  else if(tab==='activitystats') body.innerHTML = Views._tabActivityStats(s);
+  else if(tab==='customer') body.innerHTML = Views._tabCustomer(s);
+  else if(tab==='memo') body.innerHTML = Views._tabMemo(s);
+  else if(tab==='report') body.innerHTML = Views._tabReport(s);
+  else if(tab==='ai') body.innerHTML = Views._tabAI(s);
+  else body.innerHTML = Views._tabCumulative(s);
+};
+
+/* -- 누적 현황 탭 (금액은 표시하지 않음) -- */
+Views._tabCumulative = function(s){
+  const ym = App.state.selectedYM;
+  const a = App.getStaffCumulativeAgg(s.name, ym);
+  const gm = App.groupMeta(a.group);
+  if(a.days===0){
+    return `<div class="card empty-state"><div class="emoji">📊</div>이 행사자의 실적 데이터가 없습니다.</div>`;
+  }
+  return `<div class="card">
+    <div style="font-weight:800;margin-bottom:14px;">누적 현황 (~${ym||'-'})</div>
+    <div class="grid cols-4">
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">현재 등급</div><div style="margin-top:6px;"><span class="badge ${gm.cls}">${gm.label}</span></div>
+      </div>
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">누적 행사일수</div><div class="value" style="font-size:22px;">${a.days}<small>일</small></div>
+      </div>
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">누적 평균달성률</div><div class="value" style="font-size:22px;">${a.avgRate}<small>%</small></div>
+      </div>
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">16만원 미만</div><div class="value" style="font-size:22px;">${a.under16Count}<small>회 (${a.under16Pct}%)</small></div>
+      </div>
+    </div>
+    <div class="grid cols-4" style="margin-top:12px;">
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;grid-column:span 2;">
+        <div class="label">목표미달</div><div class="value" style="font-size:22px;">${a.missCount}<small>회 (${a.missPct}%)</small></div>
+      </div>
+    </div>
+  </div>`;
+};
+
+/* -- 목표 탭 -- */
+Views._tabGoal = function(s){
+  const goals = s.goals||[];
+  const rate = goals.length? Math.round(goals.filter(g=>g.done).length/goals.length*100):0;
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">개인 목표 (달성률 ${rate}%)</div>
+      <button class="btn sm primary" onclick="Actions.openGoalForm('${s.id}')">+ 목표 추가</button>
+    </div>
+    <div class="progress-bar" style="margin-bottom:14px;"><div style="width:${rate}%;background:var(--good)"></div></div>`;
+  if(goals.length===0){
+    html += `<div class="empty-state"><div class="emoji">🎯</div>등록된 목표가 없습니다.</div>`;
+  }else{
+    goals.slice().reverse().forEach(gl=>{
+      html += `<div class="item-row">
+        <div class="check ${gl.done?'done':''}" onclick="Actions.toggleGoal('${s.id}','${gl.id}')">${gl.done?'✓':''}</div>
+        <div class="content"><div class="title ${gl.done?'strike':''}">${App.util.esc(gl.title)}</div><div class="meta">등록일 ${gl.createdAt}</div></div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteGoal('${s.id}','${gl.id}')">🗑️</button></div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 관리자 활동이력 탭 (방문일/매장명/체크리스트/메모 누적 기록) -- */
+App.visitChecklist = [
+  {key:'pop', label:'POP 부착 확인'},
+  {key:'price', label:'가격고지 확인'},
+  {key:'directDisplay', label:'직접연관진열 요청'},
+  {key:'loyalCustomer', label:'충성고객 확보 활동'},
+  {key:'serviceEdu', label:'고객응대 교육'},
+  {key:'note', label:'행사노트 작성'},
+  {key:'comment', label:'목표댓글 작성'},
+  {key:'salesEncourage', label:'매출 독려'},
+  {key:'tastingEdu', label:'시식 교육'},
+  {key:'promoCheck', label:'판촉물 점검'},
+  {key:'displayImprove', label:'진열 개선'},
+  {key:'storeConsult', label:'매장담당 상담'},
+  {key:'photoUpload', label:'행사사진 업로드 확인'},
+  {key:'mobileAttendance', label:'모바일 근태 확인'},
+  {key:'beapleReg', label:'비플 등록 확인'},
+  {key:'etcEdu', label:'기타 교육'}
+];
+
+Views._tabVisitLog = function(s){
+  const logs = s.visitLogs||[];
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">관리자 활동이력 (${logs.length}건)</div>
+      <button class="btn sm primary" onclick="Actions.openVisitLogForm('${s.id}')">+ 방문기록 추가</button>
+    </div>`;
+  if(logs.length===0){
+    html += `<div class="empty-state"><div class="emoji">🗒️</div>기록된 방문/활동 이력이 없습니다.</div>`;
+  }else{
+    logs.slice().reverse().forEach(l=>{
+      const checkedLabels = App.visitChecklist.filter(it=>l.checklist && l.checklist[it.key]).map(it=>it.label);
+      html += `<div class="item-row">
+        <div class="content">
+          <div class="title">${l.date||'-'} ${l.store? '· '+App.util.esc(l.store):''}</div>
+          ${checkedLabels.length? `<div class="meta" style="margin-top:4px;">${checkedLabels.map(lb=>`<span class="badge neutral" style="margin:2px 4px 2px 0;">${App.util.esc(lb)}</span>`).join('')}</div>`:''}
+          ${l.memo? `<div class="meta" style="margin-top:4px;">${App.util.esc(l.memo)}</div>`:''}
+        </div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteVisitLog('${s.id}','${l.id}')">🗑️</button></div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 관리자 활동 통계 탭 (체크리스트 항목별 누적 횟수) -- */
+Views._tabActivityStats = function(s){
+  const logs = s.visitLogs||[];
+  const statKeys = [
+    {key:'pop', label:'POP 확인'},
+    {key:'price', label:'가격고지'},
+    {key:'directDisplay', label:'직접연관진열'},
+    {key:'loyalCustomer', label:'충성고객 확보'},
+    {key:'serviceEdu', label:'고객응대 교육'},
+    {key:'salesEncourage', label:'매출 독려'},
+    {key:'note', label:'행사노트 작성'}
+  ];
+  const counts = statKeys.map(it=>({ label:it.label, count: logs.filter(l=>l.checklist && l.checklist[it.key]).length }));
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:4px;">활동 통계 (누적 방문 ${logs.length}건 기준)</div>`;
+  if(logs.length===0){
+    html += `<div class="empty-state"><div class="emoji">📊</div>활동이력이 없습니다. '활동 이력' 탭에서 방문기록을 추가해주세요.</div>`;
+  }else{
+    html += App.chart.bar(counts.map(c=>c.label), counts.map(c=>c.count), {suffix:'회'});
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 충성고객 탭 -- */
+Views._tabCustomer = function(s){
+  const list = s.customers||[];
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">충성고객 (${list.length}명)</div>
+      <button class="btn sm primary" onclick="Actions.openCustomerForm('${s.id}')">+ 고객 추가</button>
+    </div>`;
+  if(list.length===0){
+    html += `<div class="empty-state"><div class="emoji">💛</div>등록된 충성고객이 없습니다.</div>`;
+  }else{
+    list.slice().reverse().forEach(c=>{
+      html += `<div class="item-row">
+        <div class="check ${c.revisited?'done':''}" title="재방문 체크" onclick="Actions.toggleRevisit('${s.id}','${c.id}')">${c.revisited?'✓':''}</div>
+        <div class="content"><div class="title">${App.util.esc(c.name)} <span style="color:var(--text-secondary);font-weight:600;">· ${App.util.esc(c.interest||'-')}</span></div>
+          <div class="meta">${App.util.esc(c.store||'-')} · 확보일 ${c.acquiredDate||'-'} · 다음방문예정 ${c.nextVisit||'-'}</div>
+          ${c.memo? `<div class="meta">${App.util.esc(c.memo)}</div>`:''}</div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteCustomer('${s.id}','${c.id}')">🗑️</button></div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 월별 성과 탭 (엑셀 Import 데이터 기반 자동 집계, 금액은 표시하지 않음) -- */
+Views._tabMonthly = function(s){
+  const yms = App._allYMs; // 오름차순 전체 월 목록
+  const monthlyRows = yms.map(ym=>({ ym, a: App.getStaffAgg(s.name, ym) })).filter(x=>x.a.days>0);
+
+  if(monthlyRows.length===0){
+    return `<div class="card empty-state"><div class="emoji">📊</div>이 행사자의 실적 데이터가 없습니다. 엑셀을 업로드해주세요.</div>`;
+  }
+
+  const cumRowsWithData = yms.map(ym=>({ ym, a: App.getStaffCumulativeAgg(s.name, ym) })).filter(x=>x.a.days>0);
+
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:2px;">누적 평균달성률 추이</div>
+    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">각 월까지 누적된 평균달성률입니다. 등급이 시간에 따라 어떻게 변해왔는지 확인할 수 있습니다.</div>
+    ${App.chart.bar(cumRowsWithData.map(r=>r.ym.slice(5)+'월'), cumRowsWithData.map(r=>r.a.avgRate), {suffix:'%'})}
+  </div>
+  <div class="card" style="margin-top:16px;">
+    <div style="font-weight:800;margin-bottom:10px;">월별 성과 상세</div>
+    <div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>월</th><th>등급(누적기준)</th><th>행사일수</th><th>평균달성률</th><th>16만원미만</th><th>목표미달</th>
+    </tr></thead><tbody>`;
+  monthlyRows.slice().reverse().forEach(r=>{
+    const cumGm = App.groupMeta(App.getStaffCumulativeAgg(s.name, r.ym).group);
+    html += `<tr><td>${App.util.monthLabel(r.ym)}</td><td><span class="badge ${cumGm.cls}">${cumGm.label}</span></td>
+      <td>${r.a.days}일</td><td>${r.a.avgRate}%</td>
+      <td>${r.a.under16Count}회 (${r.a.under16Pct}%)</td><td>${r.a.missCount}회 (${r.a.missPct}%)</td></tr>`;
+  });
+  html += '</tbody></table></div></div>';
+  return html;
+};
+
+/* -- 관리자 메모 탭 -- */
+Views._tabMemo = function(s){
+  const memos = s.memos||[];
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">관리자 메모 (비공개)</div>
+      <button class="btn sm primary" onclick="Actions.openMemoForm('${s.id}')">+ 메모 작성</button>
+    </div>`;
+  if(memos.length===0){
+    html += `<div class="empty-state"><div class="emoji">🔒</div>작성된 메모가 없습니다.</div>`;
+  }else{
+    memos.slice().reverse().forEach(m=>{
+      html += `<div class="item-row"><div class="content"><div class="title">${App.util.esc(m.text)}</div><div class="meta">${m.date}</div></div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteMemo('${s.id}','${m.id}')">🗑️</button></div></div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 성장 리포트 탭 -- */
+Views._tabReport = function(s){
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-weight:800;">성장 리포트 자동 출력</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn sm" onclick="Actions.copyText('reportText')">📋 복사</button>
+        <button class="btn sm primary" onclick="document.getElementById('reportText').textContent=Actions.buildGrowthReport('${s.id}')">🔄 새로 생성</button>
+      </div>
+    </div>
+    <div class="report-box" id="reportText">${App.util.esc(Actions.buildGrowthReport(s.id))}</div>
+  </div>`;
+  return html;
+};
+
+/* -- AI 코칭 탭 -- */
+Views._tabAI = function(s){
+  const c = Actions.buildAICoaching(s.id);
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="font-weight:800;">AI 코칭 제안</div>
+      <button class="btn sm primary" onclick="UI.render()">🔄 다시 분석</button>
+    </div>
+    <div class="coach-block"><h4>💪 강점</h4><p>${App.util.esc(c.strength)}</p></div>
+    <div class="coach-block"><h4>🔧 부족한 점</h4><p>${App.util.esc(c.weakness)}</p></div>
+    <div class="coach-block"><h4>🎯 다음달 추천 목표</h4><p>${App.util.esc(c.nextGoal)}</p></div>
+    <div class="coach-block"><h4>📚 교육 추천</h4><p>${App.util.esc(c.education)}</p></div>
+    <div class="coach-block"><h4>📌 관리 포인트</h4><p>${App.util.esc(c.managePoint)}</p></div>
+  </div>`;
+};
+
+/* === 8-5. 자료 관리 (CSV 내보내기/불러오기, 백업) === */
+Views.dataManage = function(){
+  UI.setTitle('자료 관리', '데이터를 엑셀(CSV)로 내보내거나 불러올 수 있습니다');
+  const staffCount = App.db.staff.length;
+  let html = `<div class="grid cols-2">
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">엑셀(CSV) 내보내기</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6;">
+        행사자 기본정보/목표/성과 데이터를 CSV 파일로 내보냅니다. CSV는 Excel에서 바로 열 수 있는 표준 형식입니다.
+      </div>
+      <button class="btn primary" style="width:100%;margin-bottom:8px;" onclick="Actions.exportStaffCSV()">👥 행사자 목록 내보내기 (CSV)</button>
+      <button class="btn" style="width:100%;margin-bottom:8px;" onclick="Actions.exportPerformanceCSV()">📈 월별 성과 내보내기 (CSV)</button>
+      <button class="btn" style="width:100%;" onclick="Actions.exportFullBackup()">🗂️ 전체 데이터 백업 (.json)</button>
+    </div>
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">엑셀(CSV) / 백업 불러오기</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6;">
+        내보낸 CSV, 실제 엑셀(.xlsx/.xls) 파일, 또는 전체 백업(.json) 파일을 다시 불러올 수 있습니다. 이름이 같은 행사자는 갱신되고, 새 이름은 새로 추가됩니다.
+      </div>
+      <div class="field">
+        <label class="field-label">행사자 목록 불러오기 (.xlsx, .xls, .csv)</label>
+        <input type="file" accept=".xlsx,.xls,.csv" onchange="Actions.importStaffCSV(this.files[0])">
+      </div>
+      <div class="field">
+        <label class="field-label">전체 백업(.json) 복원</label>
+        <input type="file" accept=".json" onchange="Actions.importFullBackup(this.files[0])">
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">📊 실적 엑셀 Import (샘표 전남지역 유인행사)</div>
+  <div class="grid cols-2">
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">엑셀 업로드 (.xlsx 전용)</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.7;">
+        아래 12개 컬럼을 사용하는 고정 양식의 엑셀(.xlsx)을 업로드하세요.<br>
+        <b>행사자이름 / 목표 / 총판매금액 / 달성률 / YEAR / MONTH / 품목군1~3 / 판매수량1~3</b><br>
+        표 위에 제목행이 있어도 헤더 행을 자동으로 찾습니다. 처음엔 전체 데이터를, 이후엔 매달 새 엑셀만 올리면 됩니다.
+        같은 <b>YEAR+MONTH</b> 데이터가 이미 있으면 그 달의 데이터를 새 내용으로 자동 갱신(업데이트)하고,
+        다른 달의 기존 데이터는 그대로 유지(누적)됩니다.
+      </div>
+      <div class="field">
+        <label class="field-label">엑셀 파일 선택 (.xlsx)</label>
+        <input type="file" accept=".xlsx,.xls" onchange="Actions.importRecordsExcel(this.files[0]); this.value='';">
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">현재 데이터 엑셀로 내보내기</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6;">
+        누적된 실적 데이터를 업로드 양식과 동일한 컬럼 구조의 .xlsx로 다시 내보낼 수 있습니다.
+      </div>
+      <button class="btn primary" style="width:100%;" onclick="Actions.exportRecordsExcel()">📥 실적 엑셀(.xlsx)로 내보내기</button>
+      <div style="font-size:12.5px;color:var(--text-secondary);margin-top:10px;">현재 누적된 실적 레코드: <b>${App.db.records.length.toLocaleString()}건</b> / 업로드된 월: <b>${App._allYMs.length}개월</b></div>
+    </div>
+  </div>
+  <div class="section-title">현재 저장 현황</div>
+  <div class="grid cols-3">
+    <div class="card stat-card"><div class="label">등록된 행사자</div><div class="value">${staffCount}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="label">누적 실적 레코드</div><div class="value">${App.db.records.length.toLocaleString()}<small> 건</small></div></div>
+    <div class="card stat-card"><div class="label">마지막 백업</div><div class="value" style="font-size:16px;">${App.db.meta.lastBackup || '없음'}</div></div>
+  </div>
+  <div class="section-title" style="color:var(--improve);">위험 구역</div>
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:10px;">모든 데이터 초기화</div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">저장된 모든 행사자/일보 데이터가 삭제됩니다. 이 작업은 되돌릴 수 없습니다.</div>
+    <button class="btn danger" onclick="Actions.resetAllData()">🗑️ 전체 데이터 초기화</button>
+  </div>`;
+  document.getElementById('view').innerHTML = html;
+};
+
+/* ------------------------- 9. ACTIONS: CRUD 및 폼/모달 ------------------------- */
+const Actions = {};
+
+/* -- 확인창 공통 -- */
+Actions.confirm = function(message, onYes){
+  UI.openModal(`
+    <h2>확인</h2>
+    <p style="font-size:14px;line-height:1.6;margin-bottom:6px;">${App.util.esc(message)}</p>
+    <div class="modal-actions">
+      <button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn danger" id="confirmYesBtn">삭제</button>
+    </div>`);
+  document.getElementById('confirmYesBtn').onclick = ()=>{ onYes(); UI.closeModal(); };
+};
+
+Actions.copyText = function(elId){
+  const text = document.getElementById(elId).textContent;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>App.util.toast('복사되었습니다')).catch(()=>App.util.toast('복사에 실패했습니다'));
+  }else{
+    const ta = document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    App.util.toast('복사되었습니다');
+  }
+};
+
+/* ===== 행사자 등록/수정 ===== */
+Actions.openStaffForm = function(staffId){
+  const s = staffId ? App.db.staff.find(x=>x.id===staffId) : null;
+  UI.openModal(`
+    <h2>${s? '행사자 정보 수정':'행사자 추가'}</h2>
+    <div class="field"><label class="field-label">행사자명</label><input id="f_name" type="text" value="${s?App.util.esc(s.name):''}" placeholder="예: 김은주"></div>
+    <div class="field"><label class="field-label">담당매장</label><input id="f_store" type="text" value="${s?App.util.esc(s.store||''):''}" placeholder="예: 롯데마트 순천점"></div>
+    <div class="field"><label class="field-label">입사일</label><input id="f_hire" type="date" value="${s?s.hireDate||'':''}"></div>
+    <div class="field"><label class="field-label">담당구분</label>
+      <select id="f_type">
+        ${['정규','계약','홍보대행'].map(t=>`<option ${s&&s.type===t?'selected':''}>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveStaff('${s?s.id:''}')">저장</button>
+    </div>`);
+};
+
+Actions.saveStaff = function(staffId){
+  const name = document.getElementById('f_name').value.trim();
+  if(!name){ App.util.toast('행사자명을 입력해주세요'); return; }
+  const store = document.getElementById('f_store').value.trim();
+  const hireDate = document.getElementById('f_hire').value;
+  const type = document.getElementById('f_type').value;
+  if(staffId){
+    const s = App.db.staff.find(x=>x.id===staffId);
+    Object.assign(s, {name, store, hireDate, type});
+  }else{
+    App.db.staff.push({
+      id: App.uid('staff'), name, store, hireDate, type,
+      createdAt: App.util.todayStr(),
+      goals:[], customers:[], memos:[], visitLogs:[]
+    });
+  }
+  App.save(); UI.closeModal(); App.util.toast('저장되었습니다'); UI.render();
+};
+
+Actions.deleteStaff = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  Actions.confirm(`'${s?s.name:''}' 행사자를 삭제하시겠습니까? 관련된 모든 기록이 함께 삭제됩니다.`, ()=>{
+    App.db.staff = App.db.staff.filter(x=>x.id!==staffId);
+    App.save(); App.util.toast('삭제되었습니다'); App.navigate('staff');
+  });
+};
+
+/* ===== 목표 ===== */
+Actions.openGoalForm = function(staffId){
+  UI.openModal(`
+    <h2>목표 추가</h2>
+    <div class="field"><label class="field-label">목표 내용</label>
+      <input id="f_goal" type="text" list="goalPresets" placeholder="예: 충성고객 월1명 확보">
+      <datalist id="goalPresets">
+        <option value="충성고객 월1명 확보"><option value="목표댓글 작성"><option value="행사노트 작성">
+        <option value="고객응대"><option value="직접연관진열"><option value="레시피 활용"><option value="매장담당 상담">
+      </datalist>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveGoal('${staffId}')">추가</button></div>`);
+};
+Actions.saveGoal = function(staffId){
+  const title = document.getElementById('f_goal').value.trim();
+  if(!title){ App.util.toast('목표 내용을 입력해주세요'); return; }
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.goals.push({id:App.uid('goal'), title, done:false, createdAt:App.util.todayStr()});
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'goal');
+};
+Actions.toggleGoal = function(staffId, goalId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const g = s.goals.find(x=>x.id===goalId); g.done = !g.done;
+  App.save(); UI.render();
+};
+Actions.deleteGoal = function(staffId, goalId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.goals = s.goals.filter(x=>x.id!==goalId); App.save(); UI.render();
+};
+
+/* ===== 관리자 활동이력 (방문일/매장명/체크리스트/메모) ===== */
+Actions.openVisitLogForm = function(staffId){
+  const checklistHtml = App.visitChecklist.map(it=>`
+    <label class="chk-item">
+      <input type="checkbox" data-key="${it.key}">
+      <span>${it.label}</span>
+    </label>`).join('');
+  UI.openModal(`
+    <h2>방문기록 추가</h2>
+    <div class="field"><label class="field-label">방문일</label><input id="f_vdate" type="date" value="${App.util.todayStr()}"></div>
+    <div class="field"><label class="field-label">매장명</label><input id="f_vstore" type="text" placeholder="예: 이마트 광산점"></div>
+    <div class="field"><label class="field-label">체크리스트</label>
+      <div class="checklist-grid" id="visitChecklistGrid">${checklistHtml}</div>
+    </div>
+    <div class="field"><label class="field-label">메모 (기타메모 포함)</label><textarea id="f_vmemo" placeholder="특이사항을 적어주세요"></textarea></div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveVisitLog('${staffId}')">추가</button></div>`);
+};
+Actions.saveVisitLog = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const date = document.getElementById('f_vdate').value || App.util.todayStr();
+  const store = document.getElementById('f_vstore').value.trim();
+  const memo = document.getElementById('f_vmemo').value.trim();
+  const checklist = {};
+  document.querySelectorAll('#visitChecklistGrid input[type=checkbox]').forEach(chk=>{
+    checklist[chk.dataset.key] = chk.checked;
+  });
+  if(!s.visitLogs) s.visitLogs = [];
+  s.visitLogs.push({ id: App.uid('visit'), date, store, checklist, memo, createdAt: App.util.todayStr() });
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'visitlog');
+};
+Actions.deleteVisitLog = function(staffId, logId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  Actions.confirm('이 방문기록을 삭제하시겠습니까?', ()=>{
+    s.visitLogs = (s.visitLogs||[]).filter(x=>x.id!==logId);
+    App.save(); UI.render();
+  });
+};
+
+/* ===== 충성고객 ===== */
+Actions.openCustomerForm = function(staffId){
+  UI.openModal(`
+    <h2>충성고객 추가</h2>
+    <div class="field"><label class="field-label">고객명</label><input id="f_cname" type="text" placeholder="예: 홍길동 고객님"></div>
+    <div class="field"><label class="field-label">관심상품</label><input id="f_cinterest" type="text" placeholder="예: 백년동안 흑초"></div>
+    <div class="field"><label class="field-label">구매매장</label><input id="f_cstore" type="text" placeholder="예: 하나로마트 광양점"></div>
+    <div class="grid cols-2">
+      <div class="field"><label class="field-label">확보일</label><input id="f_cacq" type="date" value="${App.util.todayStr()}"></div>
+      <div class="field"><label class="field-label">다음 방문 예정일</label><input id="f_cnext" type="date"></div>
+    </div>
+    <div class="field"><label class="field-label">메모</label><textarea id="f_cmemo" placeholder="선호/특이사항 등"></textarea></div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveCustomer('${staffId}')">추가</button></div>`);
+};
+Actions.saveCustomer = function(staffId){
+  const name = document.getElementById('f_cname').value.trim();
+  if(!name){ App.util.toast('고객명을 입력해주세요'); return; }
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.customers.push({
+    id:App.uid('cust'), name,
+    interest:document.getElementById('f_cinterest').value.trim(),
+    store:document.getElementById('f_cstore').value.trim(),
+    acquiredDate:document.getElementById('f_cacq').value,
+    nextVisit:document.getElementById('f_cnext').value,
+    memo:document.getElementById('f_cmemo').value.trim(),
+    revisited:false
+  });
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'customer');
+};
+Actions.toggleRevisit = function(staffId, custId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const c = s.customers.find(x=>x.id===custId); c.revisited = !c.revisited;
+  App.save(); UI.render();
+};
+Actions.deleteCustomer = function(staffId, custId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.customers = s.customers.filter(x=>x.id!==custId); App.save(); UI.render();
+};
+
+/* ===== 성과 데이터는 이제 엑셀 Import(App.db.records)로만 관리됩니다.
+   수동 실적 입력 폼은 새 스펙에서 제거되었습니다 (Views._tabMonthly 참고). ===== */
+
+
+
+/* ===== 관리자 메모 ===== */
+Actions.openMemoForm = function(staffId){
+  UI.openModal(`
+    <h2>관리자 메모 작성</h2>
+    <div class="field"><textarea id="f_memo" placeholder="비공개로 관리되는 메모입니다"></textarea></div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveMemo('${staffId}')">저장</button></div>`);
+};
+Actions.saveMemo = function(staffId){
+  const text = document.getElementById('f_memo').value.trim();
+  if(!text) return;
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.memos.push({id:App.uid('memo'), text, date:App.util.todayStr()});
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'memo');
+};
+Actions.deleteMemo = function(staffId, memoId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.memos = s.memos.filter(x=>x.id!==memoId); App.save(); UI.render();
+};
+
+/* ===== 성장 리포트 자동 생성 ===== */
+Actions.buildGrowthReport = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  if(!s) return '';
+  const months = App._allYMs.filter(ym=>App.getStaffAgg(s.name, ym).days>0);
+  const firstRate = months.length? App.getStaffAgg(s.name, months[0]).avgRate : null;
+  const lastRate = months.length? App.getStaffAgg(s.name, months[months.length-1]).avgRate : null;
+  const g = months.length? App.getStaffCumulativeAgg(s.name, months[months.length-1]).group : '제외';
+  const goals = s.goals||[]; const goalDone = goals.filter(x=>x.done).length;
+  const custCount = (s.customers||[]).length;
+  const logs = s.visitLogs||[];
+  const eduCount = logs.filter(l=>l.checklist && (l.checklist.serviceEdu || l.checklist.tastingEdu || l.checklist.etcEdu)).length;
+  const visitCount = logs.length;
+
+  let lines = [];
+  lines.push(`■ ${s.name} 성장 리포트 (${App.util.todayStr()} 기준)`);
+  lines.push('');
+  lines.push(`- 담당매장: ${s.store||'-'} / 담당구분: ${s.type||'-'} / 입사일: ${s.hireDate||'-'}`);
+  lines.push(`- 최근월 그룹: ${g}그룹`);
+  lines.push('');
+  lines.push('[교육내용]');
+  lines.push(eduCount? `누적 방문 중 ${eduCount}건에서 교육 관련 활동(고객응대/시식/기타 교육)이 진행되었습니다.` : '최근 별도로 기록된 교육 활동이 없습니다.');
+  lines.push('');
+  lines.push('[성과변화 / 달성률 변화]');
+  if(firstRate!==null && lastRate!==null){
+    const diff = lastRate-firstRate;
+    lines.push(`평균달성률이 ${firstRate}%에서 ${lastRate}%로 ${diff>=0? diff+'%p 상승':Math.abs(diff)+'%p 하락'}하였습니다.`);
+  }else{
+    lines.push('아직 업로드된 실적 데이터가 충분하지 않습니다.');
+  }
+  lines.push('');
+  lines.push('[그룹 변화]');
+  lines.push(`최근 실적을 기준으로 현재 ${g}그룹으로 분류되어 있습니다.`);
+  lines.push('');
+  lines.push('[목표 달성률]');
+  lines.push(goals.length? `전체 목표 ${goals.length}건 중 ${goalDone}건을 달성하여 달성률 ${Math.round(goalDone/goals.length*100)}%를 기록하였습니다.` : '등록된 목표가 없습니다.');
+  lines.push('');
+  lines.push('[충성고객 확보]');
+  lines.push(custCount? `누적 ${custCount}명의 충성고객을 확보하였습니다.` : '아직 확보된 충성고객이 없습니다.');
+  lines.push('');
+  lines.push('[활동이력]');
+  lines.push(visitCount? `누적 ${visitCount}건의 방문/활동이 기록되었습니다.` : '기록된 방문/활동이력이 없습니다.');
+  return lines.join('\n');
+};
+
+/* ===== AI 코칭 자동 분석 (규칙 기반) =====
+   실제 LLM API 호출 없이, 누적된 데이터(목표/실적/고객/활동)를 규칙으로 해석하여
+   강점/부족점/추천목표/교육추천/관리포인트를 자동 생성합니다. */
+Actions.buildAICoaching = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const goals = s.goals||[]; const custs = s.customers||[];
+  const months = App._allYMs.filter(ym=>App.getStaffAgg(s.name, ym).days>0);
+  const lastRate = months.length? App.getStaffAgg(s.name, months[months.length-1]).avgRate : 0;
+  const prevRate = months.length>1? App.getStaffAgg(s.name, months[months.length-2]).avgRate : lastRate;
+  const goalRate = goals.length? goals.filter(g=>g.done).length/goals.length*100 : 0;
+  const commentGoal = goals.find(g=>g.title.includes('댓글'));
+  const noteGoal = goals.find(g=>g.title.includes('노트'));
+  const g = months.length? App.getStaffCumulativeAgg(s.name, months[months.length-1]).group : '제외';
+
+  let strengthParts = [];
+  if(custs.length>=2) strengthParts.push('충성고객 확보 활동이 우수합니다');
+  if(lastRate>=prevRate && months.length>1) strengthParts.push('최근 평균달성률이 지속적으로 상승하고 있습니다');
+  if(goalRate>=70) strengthParts.push('등록된 목표의 이행률이 높은 편입니다');
+  if(strengthParts.length===0) strengthParts.push('현재까지의 데이터로는 두드러진 강점을 특정하기 어려우니, 활동기록을 조금 더 축적해보시길 권장합니다');
+
+  let weaknessParts = [];
+  if(commentGoal && !commentGoal.done) weaknessParts.push('목표댓글 작성률이 낮은 편입니다');
+  if(noteGoal && !noteGoal.done) weaknessParts.push('행사노트 작성이 다소 미흡합니다');
+  if(custs.length===0) weaknessParts.push('충성고객 확보 실적이 아직 없습니다');
+  if(lastRate<prevRate && months.length>1) weaknessParts.push('최근 평균달성률이 하락 추세를 보이고 있습니다');
+  if(weaknessParts.length===0) weaknessParts.push('특별히 우려되는 부분은 확인되지 않습니다');
+
+  let nextGoal = g==='개선' ? '기본기 강화를 위한 행사노트 작성률 향상을 다음달 목표로 추천합니다.'
+    : g==='성장' ? '목표댓글 작성 및 충성고객 추가 확보를 다음달 목표로 추천합니다.'
+    : '현재의 우수한 흐름을 유지하며 신규 상품 연관진열 확대를 목표로 추천합니다.';
+
+  let education = g==='개선' ? '고객응대 기본 교육 및 할인계산기 활용 교육을 우선 추천합니다.'
+    : g==='성장' ? '레시피 활용 및 연관진열 심화 교육을 추천합니다.'
+    : '신규 행사자 멘토링 역할을 부여할 수 있는 교육을 추천합니다.';
+
+  let managePoint = g==='개선' ? '주 단위로 방문하여 현장 밀착 관리와 독려가 필요합니다.'
+    : g==='성장' ? '월 2회 정기 방문으로 성장 추세를 지속 관리해 주세요.'
+    : '우수 사례를 타 매장에 공유할 수 있도록 관리해 주세요.';
+
+  return {
+    strength: strengthParts.join('. ') + '.',
+    weakness: weaknessParts.join('. ') + '.',
+    nextGoal, education, managePoint
+  };
+};
+
+/* ===== 자료 관리: CSV 내보내기/불러오기 ===== */
+App.csv = {
+  escapeCell(v){
+    v = (v===undefined||v===null)? '' : String(v);
+    if(/[",\n]/.test(v)) return '"' + v.replace(/"/g,'""') + '"';
+    return v;
+  },
+  toCSV(rows){
+    return rows.map(r=>r.map(App.csv.escapeCell).join(',')).join('\r\n');
+  },
+  parseCSV(text){
+    const rows=[]; let row=[]; let cell=''; let inQuotes=false;
+    for(let i=0;i<text.length;i++){
+      const c = text[i];
+      if(inQuotes){
+        if(c==='"'){ if(text[i+1]==='"'){ cell+='"'; i++; } else inQuotes=false; }
+        else cell+=c;
+      }else{
+        if(c==='"') inQuotes=true;
+        else if(c===','){ row.push(cell); cell=''; }
+        else if(c==='\n'){ row.push(cell); rows.push(row); row=[]; cell=''; }
+        else if(c==='\r'){ /* skip */ }
+        else cell+=c;
+      }
+    }
+    if(cell.length || row.length){ row.push(cell); rows.push(row); }
+    return rows.filter(r=> r.length>1 || (r[0]&&r[0].trim()!==''));
+  },
+  download(filename, content){
+    const blob = new Blob(['\ufeff'+content], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+};
+
+Actions.exportStaffCSV = function(){
+  const ym = App.state.selectedYM;
+  const { byStaff } = App.getCumulativeAgg(ym); // 누적(YTD) 기준
+  const rows = [['이름','담당매장','담당구분','입사일',`누적그룹(~${ym||'-'})`,'누적행사일수','누적평균달성률(%)','16만원미만횟수','16만원미만비율(%)','목표미달횟수','목표미달비율(%)','목표달성률(%)','충성고객수']];
+  App.db.staff.forEach(s=>{
+    const goals = s.goals||[]; const gr = goals.length? Math.round(goals.filter(x=>x.done).length/goals.length*100):0;
+    const a = byStaff[s.name] || {days:0,avgRate:0,under16Count:0,under16Pct:0,missCount:0,missPct:0,group:'제외'};
+    rows.push([s.name, s.store||'', s.type||'', s.hireDate||'', a.group, a.days, a.avgRate, a.under16Count, a.under16Pct, a.missCount, a.missPct, gr, (s.customers||[]).length]);
+  });
+  App.csv.download(`행사자목록_${App.util.todayStr()}.csv`, App.csv.toCSV(rows));
+  App.util.toast('CSV 파일이 다운로드되었습니다');
+};
+
+Actions.exportPerformanceCSV = function(){
+  const rows = [['이름','월','행사일수(그달)','평균달성률(그달,%)','16만원미만횟수','16만원미만비율(%)','목표미달횟수','목표미달비율(%)','누적평균달성률(%)','누적그룹']];
+  App.db.staff.forEach(s=>{
+    App._allYMs.forEach(mk=>{
+      const a = App.getStaffAgg(s.name, mk);
+      if(a.days>0){
+        const cum = App.getStaffCumulativeAgg(s.name, mk);
+        rows.push([s.name, mk, a.days, a.avgRate, a.under16Count, a.under16Pct, a.missCount, a.missPct, cum.avgRate, cum.group]);
+      }
+    });
+  });
+  App.csv.download(`월별성과_${App.util.todayStr()}.csv`, App.csv.toCSV(rows));
+  App.util.toast('CSV 파일이 다운로드되었습니다');
+};
+
+// 행사자 목록 불러오기: 파일 확장자에 따라 분기합니다.
+//  - .xlsx / .xls  => 반드시 ArrayBuffer로 읽어 SheetJS(XLSX.read)로 파싱합니다.
+//                     엑셀 파일은 zip으로 압축된 바이너리 파일이므로 readAsText로 읽으면
+//                     PK/workbook.xml 등 압축 데이터가 그대로 텍스트로 깨져 나옵니다. 절대 readAsText 사용 금지.
+//  - .csv          => 기존 방식대로 텍스트로 읽어 자체 CSV 파서로 처리합니다.
+Actions.importStaffCSV = function(file){
+  if(!file) return;
+  const fname = file.name.toLowerCase();
+  const isExcel = fname.endsWith('.xlsx') || fname.endsWith('.xls');
+
+  if(isExcel){
+    if(typeof XLSX === 'undefined'){
+      App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, {type:'array'});
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        // 헤더(이름/담당매장/담당구분/입사일)를 키로 하는 JSON 배열로 변환
+        const json = XLSX.utils.sheet_to_json(sheet, {defval:''});
+        const rows = json.map(row=>[
+          row['이름'] ?? row['name'] ?? '',
+          row['담당매장'] ?? row['store'] ?? '',
+          row['담당구분'] ?? row['type'] ?? '',
+          row['입사일'] ?? row['hireDate'] ?? ''
+        ]);
+        Actions._mergeStaffRows(rows);
+      }catch(err){ console.error(err); App.util.toast('엑셀 파일을 읽는 중 오류가 발생했습니다'); }
+    };
+    reader.readAsArrayBuffer(file);
+  }else{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const rows = App.csv.parseCSV(e.target.result);
+        rows.shift(); // 헤더 제거
+        Actions._mergeStaffRows(rows);
+      }catch(err){ console.error(err); App.util.toast('CSV 파일을 읽는 중 오류가 발생했습니다'); }
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+};
+
+// 엑셀/CSV 공통: [이름, 담당매장, 담당구분, 입사일] 형태의 행 배열을 받아 행사자 데이터에 병합
+Actions._mergeStaffRows = function(rows){
+  let added=0, updated=0;
+  rows.forEach(r=>{
+    const name = r[0], store = r[1], type = r[2], hireDate = r[3];
+    if(!name || !String(name).trim()) return;
+    const nameTrim = String(name).trim();
+    let s = App.db.staff.find(x=>x.name===nameTrim);
+    if(s){ s.store=store||s.store; s.type=type||s.type; s.hireDate=hireDate||s.hireDate; updated++; }
+    else{
+      App.db.staff.push({id:App.uid('staff'), name:nameTrim, store:store||'', type:type||'정규', hireDate:hireDate||'',
+        createdAt:App.util.todayStr(), goals:[], customers:[], memos:[], visitLogs:[]});
+      added++;
+    }
+  });
+  App.save();
+  App.util.toast(`불러오기 완료: 추가 ${added}건, 갱신 ${updated}건`);
+  UI.render();
+};
+
+Actions.exportFullBackup = function(){
+  const json = JSON.stringify(App.db, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download = `promoter_backup_${App.util.todayStr()}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  App.db.meta.lastBackup = App.util.todayStr();
+  App.save();
+  App.util.toast('백업 파일이 다운로드되었습니다');
+};
+
+Actions.importFullBackup = function(file){
+  if(!file) return;
+  Actions.confirm('전체 백업을 복원하면 현재 데이터가 모두 대체됩니다. 계속할까요?', ()=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = JSON.parse(e.target.result);
+        if(!data.staff) throw new Error('형식이 올바르지 않습니다');
+        App.db = data; App.save(); App.util.toast('복원이 완료되었습니다'); UI.render();
+      }catch(err){ console.error(err); App.util.toast('백업 파일을 읽는 중 오류가 발생했습니다'); }
+    };
+    reader.readAsText(file, 'UTF-8');
+  });
+};
+
+Actions.resetAllData = function(){
+  Actions.confirm('정말로 모든 데이터를 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.', ()=>{
+    App.db = App.defaultDB(); App.save(); App.util.toast('초기화되었습니다'); App.navigate('dashboard');
+  });
+};
+
+/* =========================================================================
+   9-A. 실적 엑셀 Import (샘표 전남지역 유인행사 - 고정 컬럼 스펙)
+   -------------------------------------------------------------------------
+   사용 컬럼(고정, 앞으로 바뀌지 않음):
+     행사자이름, 목표, 총판매금액, 달성률, YEAR, MONTH, 품목군1, 품목군2, 품목군3,
+     판매수량1, 판매수량2, 판매수량3  (그 외 컬럼은 사용하지 않음)
+   - .xlsx 전용. 반드시 ArrayBuffer + SheetJS(XLSX.read)로 파싱합니다. (readAsText 절대 금지)
+   - 표 위에 제목행/병합셀이 있어도 헤더 행을 자동으로 탐지합니다.
+   - YEAR+MONTH가 같은 기존 데이터가 있으면 이번 업로드 내용으로 그 달 전체를 교체(업데이트)하고,
+     다른 달의 기존 데이터는 그대로 유지합니다. (매달 순차 업로드 -> 누적되는 "월 단위 교체" 전략)
+   - 문제 있는 행은 건너뛰고 오류 목록으로 모아 완료 후 안내합니다.
+   ========================================================================= */
+
+App.recordColumns = [
+  {key:'staffName',        headers:['행사자이름','행사자명','이름']},
+  {key:'target',           headers:['목표']},
+  {key:'totalSales',       headers:['총판매금액','판매금액']},
+  {key:'achievementRate',  headers:['달성률']},
+  {key:'year',             headers:['YEAR','year','Year']},
+  {key:'month',            headers:['MONTH','month','Month']}
+];
+
+// 헤더 텍스트 -> 표준 필드 매핑. 정해진 컬럼명과 정확히(공백/대소문자 무시) 일치하는 열만 사용하고,
+// 그 외 컬럼은 조용히 무시합니다 (엑셀 양식은 앞으로 바뀌지 않는다는 전제).
+App._buildRecordColumnMap = function(headerRow){
+  const map = {}; // 열 인덱스 -> 표준 필드 key
+  headerRow.forEach((h,idx)=>{
+    const nh = App.util.normalizeHeaderStr(h);
+    if(!nh) return;
+    for(const col of App.recordColumns){
+      if(col.headers.some(alias=>App.util.normalizeHeaderStr(alias)===nh)){
+        map[idx] = col.key;
+        break;
+      }
+    }
+  });
+  return map;
+};
+
+// 시트 앞부분 최대 10행을 훑어 고정 컬럼명과 가장 많이 일치하는 행을 헤더 행으로 판단합니다.
+// (실제 회사 엑셀은 표 위에 제목행/병합셀이 있는 경우가 많아 무조건 1행을 헤더로 볼 수 없음)
+Actions._detectRecordHeaderRow = function(rawRows){
+  const scanLimit = Math.min(10, rawRows.length);
+  let bestIdx = -1, bestScore = 0;
+  for(let i=0;i<scanLimit;i++){
+    const row = (rawRows[i]||[]).map(c=>String(c||''));
+    const score = Object.keys(App._buildRecordColumnMap(row)).length;
+    if(score > bestScore){ bestScore = score; bestIdx = i; }
+  }
+  // 최소 2개 컬럼(예: 행사자이름+YEAR) 이상 일치해야 신뢰할 수 있는 헤더 행으로 인정
+  return bestScore>=2 ? bestIdx : -1;
+};
+
+Actions.importRecordsExcel = function(file){
+  if(!file) return;
+  const fname = file.name.toLowerCase();
+  if(!(fname.endsWith('.xlsx') || fname.endsWith('.xls'))){
+    App.util.toast('엑셀(.xlsx) 파일만 업로드할 수 있습니다');
+    return;
+  }
+  if(typeof XLSX === 'undefined'){
+    App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+    return;
+  }
+
+  const reader = new FileReader();
+  // ⚠ 엑셀은 zip으로 압축된 바이너리 파일입니다. readAsText로 읽으면 PK/workbook.xml 등
+  //    압축 데이터가 그대로 깨져 나옵니다. 반드시 ArrayBuffer로 읽어 SheetJS(XLSX.read)로 파싱합니다.
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type:'array', cellDates:true });
+
+      // 시트명에 제한을 두지 않고, 헤더를 자동 탐지할 수 있는 모든 시트에서 데이터를 수집합니다.
+      let allRows = [];
+      const errors = [];
+      const sheetReport = [];
+
+      workbook.SheetNames.forEach(sheetName=>{
+        const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header:1, defval:'', raw:true });
+        const headerIdx = Actions._detectRecordHeaderRow(rawRows);
+        if(headerIdx===-1) return; // 알아볼 수 있는 헤더가 없는 시트는 조용히 건너뜀
+
+        const headerRow = rawRows[headerIdx].map(h=>String(h||''));
+        const colMap = App._buildRecordColumnMap(headerRow);
+        let sheetCount = 0;
+
+        rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
+          if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; // 완전히 빈 행은 조용히 건너뜀
+
+          const raw = {};
+          Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
+
+          const staffName = String(raw.staffName||'').trim();
+          if(!staffName) return; // 행사자이름 없는 행은 조용히 건너뜀
+
+          const year = parseInt(raw.year, 10);
+          const month = parseInt(raw.month, 10);
+          if(!year || !month || month<1 || month>12){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: YEAR/MONTH를 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
+            return;
+          }
+
+          const target = App.util.parseNumberLoose(raw.target);
+          const totalSales = App.util.parseNumberLoose(raw.totalSales);
+          // ★ 검증된 계산 로직: 달성률은 엑셀 "달성률" 컬럼값을 그대로 사용합니다.
+          //   총판매금액÷목표로 재계산하지 않습니다. 값이 없거나 인식 불가하면 이 행은 건너뜁니다.
+          const rate = App.util.parseAchievementRate(raw.achievementRate);
+          if(rate===null || rate===undefined){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 달성률 값을 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
+            return;
+          }
+
+          allRows.push({
+            id: App.uid('rec'),
+            staffName, year, month, ym: `${year}-${String(month).padStart(2,'0')}`,
+            target, totalSales, achievementRate: rate
+          });
+          sheetCount++;
+        });
+
+        if(sheetCount>0) sheetReport.push({ sheetName, count:sheetCount });
+      });
+
+      if(allRows.length===0){
+        App.util.toast('엑셀에서 유효한 데이터를 찾지 못했습니다. 컬럼명(행사자이름/목표/총판매금액/달성률/YEAR/MONTH 등)을 확인해주세요.');
+        return;
+      }
+
+      Actions._mergeRecordsByMonth(allRows, sheetReport, errors);
+    }catch(err){
+      console.error(err);
+      App.util.toast('엑셀 파일을 처리하는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+// YEAR+MONTH가 같은 기존 데이터가 있으면 이번 업로드 내용으로 그 달 전체를 교체(업데이트)하고,
+// 다른 달의 기존 데이터는 그대로 유지합니다 (매달 새 엑셀을 올리는 실제 업무 흐름에 맞춘 전략).
+Actions._mergeRecordsByMonth = function(newRows, sheetReport, errors){
+  const ymGroups = {};
+  newRows.forEach(r=>{ if(!ymGroups[r.ym]) ymGroups[r.ym]=[]; ymGroups[r.ym].push(r); });
+
+  const summary = [];
+  let updatedMonths = 0, newMonths = 0;
+
+  Object.keys(ymGroups).sort().forEach(ym=>{
+    const isExisting = App.db.records.some(r=>r.ym===ym);
+    App.db.records = App.db.records.filter(r=>r.ym!==ym); // 해당 월의 기존 데이터 제거
+    App.db.records.push(...ymGroups[ym]);                  // 새 데이터로 교체
+    summary.push({ ym, count: ymGroups[ym].length, isUpdate: isExisting });
+    if(isExisting) updatedMonths++; else newMonths++;
+  });
+
+  // 새로 등장한 행사자이름은 최소 정보로 자동 등록해, 목표/메모/체크리스트 등에서 바로 이어서 쓸 수 있게 함
+  const existingNames = new Set(App.db.staff.map(s=>s.name));
+  const newNames = new Set();
+  newRows.forEach(r=>{ if(!existingNames.has(r.staffName)) newNames.add(r.staffName); });
+  newNames.forEach(name=>{
+    App.db.staff.push({
+      id: App.uid('staff'), name, store:'', type:'정규', hireDate:'', createdAt: App.util.todayStr(),
+      goals:[], customers:[], memos:[], visitLogs:[]
+    });
+  });
+
+  App._rebuildRecordIndex();
+  App.invalidateAggCache();
+  App.save();
+
+  Actions._showImportSummary(summary, sheetReport, updatedMonths, newMonths, errors);
+  UI.render();
+};
+
+Actions._showImportSummary = function(summary, sheetReport, updatedMonths, newMonths, errors){
+  const lines = summary.map(s=>`${s.ym} : ${s.count}건 ${s.isUpdate?'업데이트':'신규'} Import 완료`).join('\n');
+  const total = summary.reduce((a,s)=>a+s.count,0);
+  const msg = `${lines}\n\n총 ${total}건 Import 완료\n신규 월: ${newMonths}개월\n업데이트 월: ${updatedMonths}개월`;
+
+  const sheetLines = sheetReport.map(s=>`${s.sheetName} 시트: ${s.count}행 인식`).join('\n');
+  const sheetHtml = sheetLines ? `<div style="margin-top:14px;">
+      <div style="font-weight:800;margin-bottom:6px;">시트별 인식 결과</div>
+      <div class="report-box" style="font-size:12.5px;white-space:pre-wrap;">${App.util.esc(sheetLines)}</div>
+    </div>` : '';
+
+  let errHtml = '';
+  if(errors.length){
+    const shown = errors.slice(0,30);
+    errHtml = `<div style="margin-top:14px;">
+      <div style="font-weight:800;color:var(--improve);margin-bottom:6px;">건너뛴 행 / 오류 (${errors.length}건)</div>
+      <div class="report-box" style="max-height:180px;overflow-y:auto;font-size:12.5px;">
+        ${shown.map(e=>App.util.esc(e)).join('<br>')}${errors.length>30? `<br>...외 ${errors.length-30}건` : ''}
+      </div>
+    </div>`;
+  }
+
+  UI.openModal(`
+    <h2>엑셀 Import 완료</h2>
+    <div class="report-box" style="white-space:pre-wrap;">${App.util.esc(msg)}</div>
+    ${sheetHtml}
+    ${errHtml}
+    <div class="modal-actions"><button class="btn primary" onclick="UI.closeModal()">확인</button></div>`);
+};
+
+// 누적된 실적 데이터를 업로드 양식과 동일한 컬럼 구조로 다시 .xlsx로 내보내기
+Actions.exportRecordsExcel = function(){
+  if(typeof XLSX === 'undefined'){
+    App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+    return;
+  }
+  if(App.db.records.length===0){
+    App.util.toast('내보낼 실적 데이터가 없습니다');
+    return;
+  }
+  const sheetData = App.db.records
+    .slice()
+    .sort((a,b)=> a.ym.localeCompare(b.ym) || a.staffName.localeCompare(b.staffName))
+    .map(r=>({
+      '행사자이름': r.staffName, '목표': r.target, '총판매금액': r.totalSales, '달성률': r.achievementRate,
+      'YEAR': r.year, 'MONTH': r.month
+    }));
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(sheetData);
+  XLSX.utils.book_append_sheet(wb, ws, '실적데이터');
+  XLSX.writeFile(wb, `실적데이터_${App.util.todayStr()}.xlsx`);
+  App.util.toast('엑셀 파일이 다운로드되었습니다');
+};
+
+
+/* ------------------------- 10. 시작 ------------------------- */
+UI.init();
+
+</script>
+</body>
+</html>
