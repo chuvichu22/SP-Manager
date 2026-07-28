@@ -287,6 +287,7 @@ textarea{resize:vertical;min-height:70px;}
     <div class="brand"><span class="dot"></span>샘표 전남 유인행사</div>
     <div class="nav-item" data-route="dashboard"><span class="ico">📊</span>대시보드</div>
     <div class="nav-item" data-route="staff"><span class="ico">👥</span>행사자 관리</div>
+    <div class="nav-item" data-route="reports"><span class="ico">📋</span>활동일보 업로드</div>
     <div class="nav-item" data-route="data"><span class="ico">🗂️</span>자료 관리</div>
     <div class="nav-sep"></div>
     <div class="nav-footer">
@@ -334,7 +335,9 @@ App.defaultDB = function(){
   return {
     staff: [],
     records: [], // 샘표 전남지역 유인행사 실적 레코드 (엑셀 Import 결과, 행 단위 원본 데이터)
-    meta:{ lastBackup:null, schemaVersion:2 }
+    activityReports: [], // 매니저 작성 활동일보 (엑셀 Import 결과, 행사자와 matchedStaffId로 연결)
+    nameAliasMap: {}, // 활동일보 "사원명" 원본 텍스트 -> 행사자 staffId 매핑 (한번 수동연결하면 이후 자동 적용)
+    meta:{ lastBackup:null, schemaVersion:2, lastActivityUpload:null }
   };
 };
 
@@ -343,7 +346,7 @@ App.load = function(){
     const raw = localStorage.getItem(App.DB_KEY);
     App.db = raw ? JSON.parse(raw) : App.defaultDB();
     if(!App.db.staff) App.db.staff = [];
-    if(!App.db.meta) App.db.meta = { lastBackup:null, schemaVersion:2 };
+    if(!App.db.meta) App.db.meta = { lastBackup:null, schemaVersion:2, lastActivityUpload:null };
     // 스키마 마이그레이션: 이전 버전(날짜/매장명 기반 salesRecords)이 남아있으면
     // 새 컬럼 구조(YEAR/MONTH/품목군)와 호환되지 않으므로 한 번만 정리합니다.
     if(App.db.meta.schemaVersion !== 2){
@@ -351,6 +354,9 @@ App.load = function(){
       App.db.meta.schemaVersion = 2;
     }
     if(!App.db.records) App.db.records = [];
+    if(!App.db.activityReports) App.db.activityReports = []; // 기존 사용자도 안전하게 추가
+    if(!App.db.nameAliasMap) App.db.nameAliasMap = {};
+    if(App.db.meta.lastActivityUpload===undefined) App.db.meta.lastActivityUpload = null;
   }catch(e){
     console.error('DB 로드 실패, 초기화합니다.', e);
     App.db = App.defaultDB();
@@ -727,6 +733,7 @@ UI.render = function(){
   if(r.name==='dashboard') Views.dashboard();
   else if(r.name==='staff' && !r.staffId) Views.staffList();
   else if((r.name==='staff'||r.name==='staffDetail') && r.staffId) Views.staffDetail(r.staffId, r.tab);
+  else if(r.name==='reports') Views.activityReports();
   else if(r.name==='data') Views.dataManage();
   else Views.dashboard();
 };
@@ -934,7 +941,7 @@ Views.staffDetail = function(staffId, tab){
     <button class="btn sm" onclick="Actions.openStaffForm('${s.id}')">✏️ 정보수정</button>`);
 
   const tabs = [
-    ['cumulative','누적 현황'], ['monthly','월별 성과'], ['visitlog','활동 이력'], ['activitystats','활동 통계'],
+    ['cumulative','누적 현황'], ['monthly','월별 성과'], ['activityreport','📋 활동일보'], ['visitlog','활동 이력'], ['activitystats','활동 통계'],
     ['goal','개인 목표'], ['customer','충성고객'], ['memo','관리자 메모'],
     ['report','성장 리포트'], ['ai','AI 코칭']
   ];
@@ -949,6 +956,7 @@ Views.staffDetail = function(staffId, tab){
   if(tab==='goal') body.innerHTML = Views._tabGoal(s);
   else if(tab==='cumulative') body.innerHTML = Views._tabCumulative(s);
   else if(tab==='monthly') body.innerHTML = Views._tabMonthly(s);
+  else if(tab==='activityreport') body.innerHTML = Views._tabActivityReport(s);
   else if(tab==='visitlog') body.innerHTML = Views._tabVisitLog(s);
   else if(tab==='activitystats') body.innerHTML = Views._tabActivityStats(s);
   else if(tab==='customer') body.innerHTML = Views._tabCustomer(s);
@@ -1953,9 +1961,276 @@ Actions.exportRecordsExcel = function(){
 };
 
 
-/* ------------------------- 10. 시작 ------------------------- */
-UI.init();
+/* =========================================================================
+   11. 활동일보 업로드 & 행사자별 자동 연동 (신규 기능)
+   -------------------------------------------------------------------------
+   - 매니저가 작성한 활동일보 엑셀(.xlsx/.xls)을 업로드하면, 컬럼명 기준으로 인식하여
+     "사원명"과 행사자 관리에 등록된 행사자명을 자동 매칭하고, 방문일/거래처/매니저명
+     조합으로 중복을 판단해 누적 저장합니다.
+   - 기존 실적(records)/행사자(staff) 데이터와는 완전히 분리된 App.db.activityReports에
+     저장되며, matchedStaffId로만 연결됩니다 (이름이 나중에 바뀌어도 이력 유지).
+   - 이름이 정확히 일치하지 않으면 절대 임의로 매칭하지 않고 "매칭 필요"로 분류하며,
+     한 번 수동으로 연결하면 App.db.nameAliasMap에 저장되어 다음 업로드부터 자동 적용됩니다.
+   ========================================================================= */
 
-</script>
-</body>
-</html>
+// 활동일보 엑셀 고정 컬럼 (컬럼 순서 무관, 헤더 텍스트 기준으로 인식. 일부 컬럼이 없어도 동작)
+App.reportColumns = [
+  {key:'dept',              headers:['거래처DEPT','거래처 DEPT','DEPT','부서']},
+  {key:'managerName',       headers:['매니저명','매니저']},
+  {key:'visitDate',         headers:['방문일','방문일자','일자','날짜']},
+  {key:'directStore',       headers:['직거래처','거래처명','거래처']},
+  {key:'secondaryStore',    headers:['2차거래처명','2차거래처','2차점명','2차점']},
+  {key:'staffName',         headers:['사원명','행사자명','이름']},
+  {key:'managementSignal',  headers:['관리신호','신호']},
+  {key:'storeInventory',    headers:['매장재고','재고']},
+  {key:'tastingEvent',      headers:['시식행사','시식']},
+  {key:'managerAction',     headers:['매니저조치사항','조치사항']},
+  {key:'salesRequest',      headers:['영업요청사항','영업요청']},
+  {key:'safetyPrevention',  headers:['안전예방']},
+  {key:'storeEnvironment',  headers:['매장환경']}
+];
+
+App._buildReportColumnMap = function(headerRow){
+  const map = {};
+  headerRow.forEach((h,idx)=>{
+    const nh = App.util.normalizeHeaderStr(h);
+    if(!nh) return;
+    for(const col of App.reportColumns){
+      if(col.headers.some(alias=>App.util.normalizeHeaderStr(alias)===nh)){
+        map[idx] = col.key;
+        break;
+      }
+    }
+  });
+  return map;
+};
+
+// 표 위에 제목행이 있어도 "사원명/방문일/관리신호" 등과 가장 많이 일치하는 행을 헤더로 판단
+Actions._detectReportHeaderRow = function(rawRows){
+  const scanLimit = Math.min(10, rawRows.length);
+  let bestIdx = -1, bestScore = 0;
+  for(let i=0;i<scanLimit;i++){
+    const row = (rawRows[i]||[]).map(c=>String(c||''));
+    const score = Object.keys(App._buildReportColumnMap(row)).length;
+    if(score > bestScore){ bestScore = score; bestIdx = i; }
+  }
+  return bestScore>=3 ? bestIdx : -1; // 최소 3개 컬럼 이상 일치해야 신뢰
+};
+
+// 중복 판단 키: 방문일 + 사원명 + 직거래처 + 2차거래처명 + 매니저명
+App._reportKey = function(r){
+  return [r.visitDate||'', r.staffName||'', r.directStore||'', r.secondaryStore||'', r.managerName||''].join('|');
+};
+
+// 활동일보의 "사원명"으로 행사자를 찾는다: 정확히 일치 -> 저장된 별칭매핑 -> 없으면 null(매칭 필요)
+App.findStaffIdForReportName = function(rawName){
+  const name = String(rawName||'').trim();
+  if(!name) return null;
+  const exact = App.db.staff.find(x=>x.name===name);
+  if(exact) return exact.id;
+  if(App.db.nameAliasMap[name]){
+    const aliased = App.db.staff.find(x=>x.id===App.db.nameAliasMap[name]);
+    if(aliased) return aliased.id;
+  }
+  return null;
+};
+
+// 업로드 후 "반영하기" 전까지 미리보기 상태로 들고 있는 임시 데이터 (아직 App.db에 저장되지 않음)
+Views._reportStaging = null; // { fileName, rows:[...], errors:[...] }
+Views._reportListState = { tab:'list', q:'', store:'', manager:'', ym:'', signal:'' };
+Views._reportExpandedId = null;
+
+Actions.importActivityReportExcel = function(file){
+  if(!file) return;
+  const fname = file.name.toLowerCase();
+  if(!(fname.endsWith('.xlsx') || fname.endsWith('.xls'))){
+    App.util.toast('활동일보는 엑셀(.xlsx, .xls) 파일만 업로드할 수 있습니다');
+    return;
+  }
+  if(typeof XLSX === 'undefined'){
+    App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+    return;
+  }
+  const reader = new FileReader();
+  // ⚠ 엑셀은 바이너리(zip) 파일이므로 반드시 ArrayBuffer로 읽어 SheetJS로 파싱합니다.
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type:'array', cellDates:true });
+
+      const rows = [];
+      const errors = [];
+
+      workbook.SheetNames.forEach(sheetName=>{
+        const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header:1, defval:'', raw:true });
+        const headerIdx = Actions._detectReportHeaderRow(rawRows);
+        if(headerIdx===-1) return; // 이 시트에는 활동일보 컬럼이 없음 -> 건너뜀
+
+        const headerRow = rawRows[headerIdx].map(h=>String(h||''));
+        const colMap = App._buildReportColumnMap(headerRow);
+
+        rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
+          if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; // 완전히 빈 행은 조용히 건너뜀
+
+          const raw = {};
+          Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
+
+          const staffName = String(raw.staffName||'').trim();
+          if(!staffName){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 사원명이 비어있어 건너뜀`);
+            return;
+          }
+
+          let visitDate = App.util.normalizeExcelDate(raw.visitDate, null);
+          if(!visitDate){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 방문일을 인식하지 못했습니다 (사원명: ${staffName}). 날짜 없이 기록됩니다.`);
+            visitDate = '';
+          }
+
+          const matchedStaffId = App.findStaffIdForReportName(staffName);
+
+          rows.push({
+            _tempId: App.uid('tmp'),
+            dept: String(raw.dept||'').trim(),
+            managerName: String(raw.managerName||'').trim(),
+            visitDate,
+            directStore: String(raw.directStore||'').trim(),
+            secondaryStore: String(raw.secondaryStore||'').trim(),
+            staffName,
+            matchedStaffId,
+            isMatched: !!matchedStaffId,
+            managementSignal: String(raw.managementSignal===undefined?'':raw.managementSignal).trim(),
+            storeInventory: String(raw.storeInventory===undefined?'':raw.storeInventory).trim(),
+            tastingEvent: String(raw.tastingEvent===undefined?'':raw.tastingEvent).trim(),
+            managerAction: String(raw.managerAction===undefined?'':raw.managerAction).trim(),
+            salesRequest: String(raw.salesRequest===undefined?'':raw.salesRequest).trim(),
+            safetyPrevention: String(raw.safetyPrevention===undefined?'':raw.safetyPrevention).trim(),
+            storeEnvironment: String(raw.storeEnvironment===undefined?'':raw.storeEnvironment).trim()
+          });
+        });
+      });
+
+      if(rows.length===0){
+        App.util.toast('엑셀에서 유효한 활동일보 데이터를 찾지 못했습니다. 컬럼명(사원명/방문일 등)을 확인해주세요.');
+        return;
+      }
+
+      // 기존 데이터와 대조하여 신규/업데이트/중복 상태를 미리 계산 (미리보기용)
+      rows.forEach(r=>{
+        const key = App._reportKey(r);
+        const existing = App.db.activityReports.find(x=>App._reportKey(x)===key);
+        if(!existing){ r._status = 'new'; }
+        else{
+          const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','storeEnvironment']
+            .every(f=> (existing[f]||'') === (r[f]||''));
+          r._status = fieldsSame ? 'duplicate' : 'update';
+        }
+      });
+
+      Views._reportStaging = { fileName: file.name, rows, errors };
+      App.navigate('reports');
+    }catch(err){
+      console.error(err);
+      App.util.toast('활동일보 엑셀을 처리하는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+// 드래그앤드롭 업로드 지원
+Actions.handleReportDrop = function(ev){
+  ev.preventDefault();
+  const dt = ev.dataTransfer;
+  if(dt && dt.files && dt.files.length){
+    Actions.importActivityReportExcel(dt.files[0]);
+  }
+};
+
+// 미리보기 화면에서 "행사자 연결" (미반영 상태의 임시 매칭)
+Actions.openMatchStaffModal = function(rawName, mode){
+  // mode: 'staging' (업로드 전 미리보기) | 'committed' (이미 저장된 데이터의 매칭 필요 항목)
+  Views._matchPickerQuery = '';
+  Actions._renderMatchStaffModal(rawName, mode);
+};
+Actions._renderMatchStaffModal = function(rawName, mode){
+  const q = Views._matchPickerQuery||'';
+  const candidates = App.db.staff.filter(s=>!q || s.name.includes(q)).slice(0,50);
+  const listHtml = candidates.map(s=>
+    `<div class="item-row" style="cursor:pointer;" onclick="Actions.confirmMatchStaff('${App.util.esc(rawName).replace(/'/g,"\\'")}','${s.id}','${mode}')">
+      <div class="staff-avatar">${App.util.esc(s.name[0]||'?')}</div>
+      <div class="content"><div class="title">${App.util.esc(s.name)}</div><div class="meta">${App.util.esc(s.store||'-')}</div></div>
+    </div>`
+  ).join('') || `<div class="empty-state" style="padding:20px;"><div class="emoji">🔍</div>일치하는 행사자가 없습니다.</div>`;
+
+  UI.openModal(`
+    <h2>행사자 연결</h2>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">
+      활동일보 사원명 "<b>${App.util.esc(rawName)}</b>"을(를) 어떤 행사자와 연결할까요?<br>
+      한 번 연결하면 다음 업로드부터 자동으로 적용됩니다.
+    </p>
+    <input type="text" placeholder="행사자명 검색" value="${App.util.esc(q)}"
+      oninput="Views._matchPickerQuery=this.value;Actions._renderMatchStaffModal('${App.util.esc(rawName).replace(/'/g,"\\'")}','${mode}')" style="margin-bottom:10px;">
+    <div id="matchPickerList" style="max-height:320px;overflow-y:auto;">${listHtml}</div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button></div>`);
+};
+
+Actions.confirmMatchStaff = function(rawName, staffId, mode){
+  // 별칭매핑 저장 -> 다음 업로드부터 자동 적용
+  App.db.nameAliasMap[rawName] = staffId;
+  App.save();
+
+  if(mode==='staging' && Views._reportStaging){
+    Views._reportStaging.rows.forEach(r=>{
+      if(r.staffName===rawName){ r.matchedStaffId = staffId; r.isMatched = true; }
+    });
+  }else{
+    // 이미 저장된 데이터: 해당 사원명의 모든 활동일보를 일괄 연결
+    App.db.activityReports.forEach(r=>{
+      if(r.staffName===rawName){ r.matchedStaffId = staffId; r.isMatched = true; }
+    });
+    App.save();
+  }
+  UI.closeModal();
+  App.util.toast('행사자와 연결되었습니다');
+  UI.render();
+};
+
+// 미리보기 -> 실제 저장 반영
+Actions.commitActivityReports = function(){
+  const staging = Views._reportStaging;
+  if(!staging) return;
+
+  let added=0, updated=0, skipped=0, unmatched=0;
+  staging.rows.forEach(r=>{
+    const key = App._reportKey(r);
+    const existing = App.db.activityReports.find(x=>App._reportKey(x)===key);
+    if(!r.matchedStaffId) unmatched++;
+
+    if(existing){
+      const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','storeEnvironment']
+        .every(f=> (existing[f]||'') === (r[f]||''));
+      if(fieldsSame){ skipped++; }
+      else{
+        Object.assign(existing, {
+          managementSignal:r.managementSignal, storeInventory:r.storeInventory, tastingEvent:r.tastingEvent,
+          managerAction:r.managerAction, salesRequest:r.salesRequest, safetyPrevention:r.safetyPrevention,
+          storeEnvironment:r.storeEnvironment, matchedStaffId:r.matchedStaffId, isMatched:r.isMatched,
+          dept:r.dept, managerName:r.managerName
+        });
+        updated++;
+      }
+    }else{
+      App.db.activityReports.push({
+        id: App.uid('report'),
+        dept:r.dept, managerName:r.managerName, visitDate:r.visitDate,
+        directStore:r.directStore, secondaryStore:r.secondaryStore, staffName:r.staffName,
+        matchedStaffId:r.matchedStaffId, managementSignal:r.managementSignal, storeInventory:r.storeInventory,
+        tastingEvent:r.tastingEvent, managerAction:r.managerAction, salesRequest:r.salesRequest,
+        safetyPrevention:r.safetyPrevention, storeEnvironment:r.storeEnvironment,
+        uploadedAt: App.util.todayStr(), sourceFile: staging.fileName, isMatched: r.isMatched
+      });
+      added++;
+    }
+  });
+
+  App.db.meta.lastActivityUpload = { fileNam
