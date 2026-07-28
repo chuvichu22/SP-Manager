@@ -337,31 +337,48 @@ App.defaultDB = function(){
     records: [], // 샘표 전남지역 유인행사 실적 레코드 (엑셀 Import 결과, 행 단위 원본 데이터)
     activityReports: [], // 매니저 작성 활동일보 (엑셀 Import 결과, 행사자와 matchedStaffId로 연결)
     nameAliasMap: {}, // 활동일보 "사원명" 원본 텍스트 -> 행사자 staffId 매핑 (한번 수동연결하면 이후 자동 적용)
-    meta:{ lastBackup:null, schemaVersion:2, lastActivityUpload:null }
+    meta:{ lastBackup:null, schemaVersion:3, lastActivityUpload:null }
   };
 };
 
+// ★ 스키마 버전을 3으로 올렸습니다. 예전 버전(체크리스트/일보자동작성/품목통계 등 이전 구조)에서
+//   저장된 localStorage 데이터는 새 구조와 맞지 않아 로딩 중 조용히 깨질 수 있으므로,
+//   버전이 다르면 무조건 깨끗한 기본 구조로 다시 시작합니다 (행사자를 다시 등록해야 할 수 있습니다).
 App.load = function(){
+  let loaded = null;
   try{
     const raw = localStorage.getItem(App.DB_KEY);
-    App.db = raw ? JSON.parse(raw) : App.defaultDB();
-    if(!App.db.staff) App.db.staff = [];
-    if(!App.db.meta) App.db.meta = { lastBackup:null, schemaVersion:2, lastActivityUpload:null };
-    // 스키마 마이그레이션: 이전 버전(날짜/매장명 기반 salesRecords)이 남아있으면
-    // 새 컬럼 구조(YEAR/MONTH/품목군)와 호환되지 않으므로 한 번만 정리합니다.
-    if(App.db.meta.schemaVersion !== 2){
-      App.db.records = [];
-      App.db.meta.schemaVersion = 2;
-    }
-    if(!App.db.records) App.db.records = [];
-    if(!App.db.activityReports) App.db.activityReports = []; // 기존 사용자도 안전하게 추가
-    if(!App.db.nameAliasMap) App.db.nameAliasMap = {};
-    if(App.db.meta.lastActivityUpload===undefined) App.db.meta.lastActivityUpload = null;
+    if(raw) loaded = JSON.parse(raw);
   }catch(e){
-    console.error('DB 로드 실패, 초기화합니다.', e);
-    App.db = App.defaultDB();
+    console.error('저장된 데이터를 읽는 중 오류가 발생하여 초기화합니다.', e);
+    loaded = null;
   }
-  App._rebuildRecordIndex();
+
+  const isValid = loaded && typeof loaded==='object' && !Array.isArray(loaded)
+    && Array.isArray(loaded.staff) && loaded.meta && loaded.meta.schemaVersion===3;
+
+  App.db = isValid ? loaded : App.defaultDB();
+
+  // 방어적 보정: 혹시 일부 필드만 비정상이어도 앱이 멈추지 않도록 보강
+  if(!Array.isArray(App.db.staff)) App.db.staff = [];
+  if(!Array.isArray(App.db.records)) App.db.records = [];
+  if(!Array.isArray(App.db.activityReports)) App.db.activityReports = [];
+  if(!App.db.nameAliasMap || typeof App.db.nameAliasMap!=='object' || Array.isArray(App.db.nameAliasMap)) App.db.nameAliasMap = {};
+  if(!App.db.meta || typeof App.db.meta!=='object') App.db.meta = { lastBackup:null, schemaVersion:3, lastActivityUpload:null };
+  if(App.db.meta.lastActivityUpload===undefined) App.db.meta.lastActivityUpload = null;
+  App.db.meta.schemaVersion = 3;
+
+  try{
+    App._rebuildRecordIndex();
+  }catch(e){
+    console.error('실적 데이터 인덱스 생성 중 오류가 발생하여 실적 데이터를 초기화합니다.', e);
+    App.db.records = [];
+    App._byYM = {};
+    App._allYMs = [];
+  }
+
+  // 정상화된 구조를 즉시 다시 저장해서, 다음 로딩부터는 항상 유효한 데이터만 남도록 함
+  try{ App.save(); }catch(e){ console.error('초기 저장 실패', e); }
 };
 
 // 선택된 YEAR-MONTH 등 전역 UI 상태 (localStorage에 별도 저장하여 새로고침해도 유지)
@@ -656,20 +673,32 @@ window.addEventListener('hashchange', ()=>{
 const UI = {};
 
 UI.init = function(){
-  App.load();
-  App.loadState();
-  // 테마
-  const theme = localStorage.getItem(App.THEME_KEY) || 'light';
-  document.documentElement.setAttribute('data-theme', theme);
-  UI.syncThemeSwitch();
-  // 네비게이션 클릭
-  document.querySelectorAll('.nav-item').forEach(el=>{
-    el.addEventListener('click', ()=>{ App.navigate(el.dataset.route); UI.closeSidebar(); });
-  });
-  UI.renderYmSelector();
-  const parts = location.hash.replace('#/','').split('/').filter(Boolean);
-  App.route = { name: parts[0]||'dashboard', staffId: parts[1]||null, tab: parts[2]||'goal' };
-  UI.render();
+  try{
+    App.load();
+    App.loadState();
+    // 테마
+    const theme = localStorage.getItem(App.THEME_KEY) || 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    UI.syncThemeSwitch();
+    // 네비게이션 클릭
+    document.querySelectorAll('.nav-item').forEach(el=>{
+      el.addEventListener('click', ()=>{ App.navigate(el.dataset.route); UI.closeSidebar(); });
+    });
+    UI.renderYmSelector();
+    const parts = location.hash.replace('#/','').split('/').filter(Boolean);
+    App.route = { name: parts[0]||'dashboard', staffId: parts[1]||null, tab: parts[2]||'goal' };
+    UI.render();
+  }catch(e){
+    console.error('앱 초기화 중 오류가 발생했습니다:', e);
+    const view = document.getElementById('view');
+    if(view){
+      view.innerHTML = `<div class="card" style="border:1px solid var(--improve);">
+        <div style="font-weight:800;color:var(--improve);margin-bottom:8px;">초기화 중 오류가 발생했습니다</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">${App.util.esc(e.message||String(e))}</div>
+        <button class="btn danger" onclick="localStorage.clear(); location.reload();">저장된 데이터 초기화 후 새로고침</button>
+      </div>`;
+    }
+  }
 };
 
 // 상단 고정 YEAR-MONTH 선택 드롭다운을 그림 (records에 존재하는 월만 선택지로 노출)
@@ -2207,30 +2236,4 @@ Actions.commitActivityReports = function(){
     if(!r.matchedStaffId) unmatched++;
 
     if(existing){
-      const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','storeEnvironment']
-        .every(f=> (existing[f]||'') === (r[f]||''));
-      if(fieldsSame){ skipped++; }
-      else{
-        Object.assign(existing, {
-          managementSignal:r.managementSignal, storeInventory:r.storeInventory, tastingEvent:r.tastingEvent,
-          managerAction:r.managerAction, salesRequest:r.salesRequest, safetyPrevention:r.safetyPrevention,
-          storeEnvironment:r.storeEnvironment, matchedStaffId:r.matchedStaffId, isMatched:r.isMatched,
-          dept:r.dept, managerName:r.managerName
-        });
-        updated++;
-      }
-    }else{
-      App.db.activityReports.push({
-        id: App.uid('report'),
-        dept:r.dept, managerName:r.managerName, visitDate:r.visitDate,
-        directStore:r.directStore, secondaryStore:r.secondaryStore, staffName:r.staffName,
-        matchedStaffId:r.matchedStaffId, managementSignal:r.managementSignal, storeInventory:r.storeInventory,
-        tastingEvent:r.tastingEvent, managerAction:r.managerAction, salesRequest:r.salesRequest,
-        safetyPrevention:r.safetyPrevention, storeEnvironment:r.storeEnvironment,
-        uploadedAt: App.util.todayStr(), sourceFile: staging.fileName, isMatched: r.isMatched
-      });
-      added++;
-    }
-  });
-
-  App.db.meta.lastActivityUpload = { fileNam
+      const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','s
