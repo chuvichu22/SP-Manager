@@ -2236,4 +2236,274 @@ Actions.commitActivityReports = function(){
     if(!r.matchedStaffId) unmatched++;
 
     if(existing){
-      const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','s
+      const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','storeEnvironment']
+        .every(f=> (existing[f]||'') === (r[f]||''));
+      if(fieldsSame){ skipped++; }
+      else{
+        Object.assign(existing, {
+          managementSignal:r.managementSignal, storeInventory:r.storeInventory, tastingEvent:r.tastingEvent,
+          managerAction:r.managerAction, salesRequest:r.salesRequest, safetyPrevention:r.safetyPrevention,
+          storeEnvironment:r.storeEnvironment, matchedStaffId:r.matchedStaffId, isMatched:r.isMatched,
+          dept:r.dept, managerName:r.managerName
+        });
+        updated++;
+      }
+    }else{
+      App.db.activityReports.push({
+        id: App.uid('report'),
+        dept:r.dept, managerName:r.managerName, visitDate:r.visitDate,
+        directStore:r.directStore, secondaryStore:r.secondaryStore, staffName:r.staffName,
+        matchedStaffId:r.matchedStaffId, managementSignal:r.managementSignal, storeInventory:r.storeInventory,
+        tastingEvent:r.tastingEvent, managerAction:r.managerAction, salesRequest:r.salesRequest,
+        safetyPrevention:r.safetyPrevention, storeEnvironment:r.storeEnvironment,
+        uploadedAt: App.util.todayStr(), sourceFile: staging.fileName, isMatched: r.isMatched
+      });
+      added++;
+    }
+  });
+
+  App.db.meta.lastActivityUpload = { fileName: staging.fileName, date: App.util.todayStr() };
+  App.save();
+
+  const total = staging.rows.length;
+  Views._reportStaging = null;
+
+  UI.openModal(`
+    <h2>활동일보 업로드 완료</h2>
+    <div class="report-box" style="white-space:pre-wrap;">✅ 전체 ${total}건
+✅ 신규 등록 ${added}건
+🔄 기존 데이터 업데이트 ${updated}건
+⏭️ 중복 제외 ${skipped}건
+⚠️ 행사자 매칭 필요 ${unmatched}건</div>
+    <div class="modal-actions">
+      ${unmatched? `<button class="btn" onclick="UI.closeModal();Views._reportListState.tab='unmatched';UI.render();">매칭 필요 데이터 확인</button>`:''}
+      <button class="btn primary" onclick="UI.closeModal();UI.render();">확인</button>
+    </div>`);
+};
+
+Actions.cancelReportStaging = function(){
+  Actions.confirm('업로드를 취소하시겠습니까? 미리보기 중인 데이터는 저장되지 않습니다.', ()=>{
+    Views._reportStaging = null;
+    UI.render();
+  });
+};
+
+/* ---- 활동일보 페이지 ---- */
+Views.activityReports = function(){
+  UI.setTitle('활동일보 업로드', '매니저 활동일보 엑셀을 업로드하면 행사자별로 자동 연동됩니다');
+
+  const lastUp = App.db.meta.lastActivityUpload;
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:8px;">📋 활동일보 엑셀 업로드</div>
+    <div id="reportDropZone" style="border:2px dashed var(--border);border-radius:var(--radius-sm);padding:22px;text-align:center;margin-bottom:12px;"
+      ondragover="event.preventDefault();" ondrop="Actions.handleReportDrop(event)">
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-bottom:10px;">여기로 파일을 드래그하거나 아래에서 선택하세요 (.xlsx, .xls)</div>
+      <input type="file" accept=".xlsx,.xls" onchange="Actions.importActivityReportExcel(this.files[0]); this.value='';">
+    </div>
+    <div style="font-size:12.5px;color:var(--text-secondary);">
+      마지막 업로드: ${lastUp? `${App.util.esc(lastUp.fileName)} · ${lastUp.date}` : '없음'}
+    </div>
+  </div>`;
+
+  if(Views._reportStaging){
+    html += Views._reportPreviewHtml();
+    document.getElementById('view').innerHTML = html;
+    return;
+  }
+
+  const st = Views._reportListState;
+  const totalCount = App.db.activityReports.length;
+  const unmatchedNames = [...new Set(App.db.activityReports.filter(r=>!r.isMatched).map(r=>r.staffName))];
+
+  html += `<div class="tabs">
+    <div class="tab-btn ${st.tab==='list'?'active':''}" onclick="Views._reportListState.tab='list';UI.render()">전체 목록 <span class="cnt">${totalCount}</span></div>
+    <div class="tab-btn ${st.tab==='unmatched'?'active':''}" onclick="Views._reportListState.tab='unmatched';UI.render()">매칭 필요 <span class="cnt">${unmatchedNames.length}</span></div>
+  </div>`;
+
+  html += st.tab==='unmatched' ? Views._reportUnmatchedHtml() : Views._reportListHtml();
+
+  document.getElementById('view').innerHTML = html;
+};
+
+Views._reportPreviewHtml = function(){
+  const staging = Views._reportStaging;
+  const rows = staging.rows;
+  const total = rows.length;
+  const unmatchedNames = [...new Set(rows.filter(r=>!r.matchedStaffId).map(r=>r.staffName))];
+  const unmatchedCount = rows.filter(r=>!r.matchedStaffId).length;
+  const matchedCount = total - unmatchedCount;
+
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:10px;">업로드 데이터 미리보기 — "${App.util.esc(staging.fileName)}"</div>
+    <div class="report-box" style="white-space:pre-wrap;">전체 활동일보 ${total}건
+
+✅ 행사자 자동 매칭 가능: ${matchedCount}건
+⚠️ 행사자 확인 필요: ${unmatchedCount}건</div>
+  </div>`;
+
+  if(unmatchedNames.length){
+    html += `<div class="section-title">⚠️ 매칭되지 않은 행사자 <span class="cnt">${unmatchedNames.length}</span></div>
+    <div class="card" style="padding:8px 12px;">`;
+    unmatchedNames.forEach(name=>{
+      const sample = rows.find(r=>r.staffName===name);
+      const cnt = rows.filter(r=>r.staffName===name).length;
+      html += `<div class="item-row">
+        <div class="content"><div class="title">${App.util.esc(name)} <span class="badge neutral">매칭 필요</span></div>
+          <div class="meta">${cnt}건 · 방문일 ${sample.visitDate||'-'} · ${App.util.esc(sample.directStore||'-')} ${App.util.esc(sample.secondaryStore||'')}</div></div>
+        <button class="btn sm" onclick="Actions.openMatchStaffModal('${App.util.esc(name).replace(/'/g,"\\'")}','staging')">행사자 연결</button>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  html += `<div class="section-title">미리보기 데이터</div>
+  <div class="card"><div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+    <th>방문일</th><th>사원명</th><th>매장명</th><th>관리신호</th><th>매니저조치사항</th>
+  </tr></thead><tbody>`;
+  rows.slice(0,50).forEach(r=>{
+    html += `<tr><td>${r.visitDate||'-'}</td><td>${App.util.esc(r.staffName)}${!r.matchedStaffId?' <span class="badge neutral">확인필요</span>':''}</td>
+      <td>${App.util.esc(r.directStore||'-')} ${App.util.esc(r.secondaryStore||'')}</td>
+      <td>${App.util.esc(r.managementSignal||'-')}</td>
+      <td>${App.util.esc((r.managerAction||'').slice(0,30))}</td></tr>`;
+  });
+  if(rows.length>50){
+    html += `<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">외 ${rows.length-50}건...</td></tr>`;
+  }
+  html += '</tbody></table></div></div>';
+
+  if(staging.errors.length){
+    html += `<div class="section-title" style="color:var(--improve);">건너뛴 행 / 오류 <span class="cnt">${staging.errors.length}</span></div>
+    <div class="card"><div class="report-box" style="max-height:160px;overflow-y:auto;font-size:12.5px;">${staging.errors.map(e=>App.util.esc(e)).join('<br>')}</div></div>`;
+  }
+
+  html += `<div class="card" style="display:flex;gap:10px;justify-content:flex-end;">
+    <button class="btn" onclick="Actions.cancelReportStaging()">취소</button>
+    <button class="btn primary" onclick="Actions.commitActivityReports()">업로드하고 행사자 관리에 반영</button>
+  </div>`;
+  return html;
+};
+
+Views._reportListHtml = function(){
+  const st = Views._reportListState;
+  let list = App.db.activityReports.slice();
+
+  if(st.q.trim()) list = list.filter(r=>r.staffName.includes(st.q.trim()));
+
+  list.sort((a,b)=> (b.visitDate||'').localeCompare(a.visitDate||''));
+
+  let html = `<div class="card">
+    <div class="toolbar">
+      <input class="grow" type="text" placeholder="행사자명으로 검색" value="${App.util.esc(st.q)}" oninput="Views._reportListState.q=this.value;UI.render()">
+    </div>`;
+
+  if(list.length===0){
+    html += `<div class="empty-state"><div class="emoji">📋</div>조건에 맞는 활동일보가 없습니다.</div>`;
+  }else{
+    html += `<div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>방문일</th><th>사원명</th><th>매장</th><th>관리신호</th><th></th>
+    </tr></thead><tbody>`;
+    list.forEach(r=>{
+      const expanded = Views._reportExpandedId===r.id;
+      html += `<tr class="row" onclick="Views._reportExpandedId=Views._reportExpandedId==='${r.id}'?null:'${r.id}';UI.render()">
+        <td>${r.visitDate||'-'}</td>
+        <td>${App.util.esc(r.staffName)}${!r.isMatched?' <span class="badge neutral">매칭필요</span>':''}</td>
+        <td>${App.util.esc(r.directStore||'-')} ${App.util.esc(r.secondaryStore||'')}</td>
+        <td>${App.util.esc(r.managementSignal||'-')}</td>
+        <td>${expanded?'▲':'▼'}</td>
+      </tr>`;
+      if(expanded){
+        html += `<tr><td colspan="5" style="background:var(--bg-soft);">
+          <div style="padding:12px;font-size:13px;line-height:1.8;">
+            <b>매니저명:</b> ${App.util.esc(r.managerName||'-')}<br>
+            <b>매장재고:</b> ${App.util.esc(r.storeInventory||'-')}<br>
+            <b>시식행사:</b> ${App.util.esc(r.tastingEvent||'-')}<br>
+            <b>매니저조치사항:</b> ${App.util.esc(r.managerAction||'-')}<br>
+            <b>영업요청사항:</b> ${App.util.esc(r.salesRequest||'-')}<br>
+            <b>안전예방:</b> ${App.util.esc(r.safetyPrevention||'-')}<br>
+            <b>매장환경:</b> ${App.util.esc(r.storeEnvironment||'-')}<br>
+            <b>거래처DEPT:</b> ${App.util.esc(r.dept||'-')}
+          </div></td></tr>`;
+      }
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  return html;
+};
+
+Views._reportUnmatchedHtml = function(){
+  const unmatched = App.db.activityReports.filter(r=>!r.isMatched);
+  const names = [...new Set(unmatched.map(r=>r.staffName))];
+  let html = '<div class="card">';
+  if(names.length===0){
+    html += `<div class="empty-state"><div class="emoji">✅</div>매칭이 필요한 활동일보가 없습니다.</div>`;
+  }else{
+    html += `<div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>활동일보 사원명</th><th>건수</th><th>최근 방문일</th><th>매장</th><th>상태</th><th></th>
+    </tr></thead><tbody>`;
+    names.forEach(name=>{
+      const recs = unmatched.filter(r=>r.staffName===name).sort((a,b)=>(b.visitDate||'').localeCompare(a.visitDate||''));
+      const latest = recs[0];
+      html += `<tr><td>${App.util.esc(name)}</td><td>${recs.length}건</td><td>${latest.visitDate||'-'}</td>
+        <td>${App.util.esc(latest.directStore||'-')} ${App.util.esc(latest.secondaryStore||'')}</td>
+        <td><span class="badge neutral">매칭 필요</span></td>
+        <td><button class="btn sm" onclick="Actions.openMatchStaffModal('${App.util.esc(name).replace(/'/g,"\\'")}','committed')">행사자 연결</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 행사자 상세: 활동일보 탭 -- */
+Views._tabActivityReport = function(s){
+  const reports = App.db.activityReports.filter(r=>r.matchedStaffId===s.id)
+    .sort((a,b)=>(b.visitDate||'').localeCompare(a.visitDate||''));
+
+  let html = '';
+  if(reports.length===0){
+    return `<div class="card empty-state"><div class="emoji">📋</div>이 행사자에게 연결된 활동일보가 없습니다.</div>`;
+  }
+
+  const latest = reports[0];
+  html += `<div class="card">
+    <div style="font-weight:800;margin-bottom:10px;">최근 활동 정보</div>
+    <div style="font-size:13.5px;line-height:2;">
+      <b>최근 활동일:</b> ${latest.visitDate||'-'}<br>
+      <b>최근 방문매장:</b> ${App.util.esc(latest.directStore||'-')} ${App.util.esc(latest.secondaryStore||'')}<br>
+      ${latest.managementSignal? `<b>최근 관리신호:</b> ${App.util.esc(latest.managementSignal)}`:''}
+    </div>
+  </div>`;
+
+  html += `<div class="section-title">📋 활동일보 이력 <span class="cnt">${reports.length}</span></div>
+  <div class="card"><div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+    <th>방문일</th><th>매장</th><th>관리신호</th><th>매니저조치사항</th><th></th>
+  </tr></thead><tbody>`;
+  reports.forEach(r=>{
+    const expanded = Views._reportExpandedId===r.id;
+    html += `<tr class="row" onclick="Views._reportExpandedId=Views._reportExpandedId==='${r.id}'?null:'${r.id}';UI.render()">
+      <td>${r.visitDate||'-'}</td><td>${App.util.esc(r.directStore||'-')} ${App.util.esc(r.secondaryStore||'')}</td>
+      <td>${App.util.esc(r.managementSignal||'-')}</td>
+      <td>${App.util.esc((r.managerAction||'').slice(0,30))}</td><td>${expanded?'▲':'▼'}</td></tr>`;
+    if(expanded){
+      html += `<tr><td colspan="5" style="background:var(--bg-soft);"><div style="padding:12px;font-size:13px;line-height:1.8;">
+        <b>매장재고:</b> ${App.util.esc(r.storeInventory||'-')}<br>
+        <b>시식행사:</b> ${App.util.esc(r.tastingEvent||'-')}<br>
+        <b>매니저조치사항:</b> ${App.util.esc(r.managerAction||'-')}<br>
+        <b>영업요청사항:</b> ${App.util.esc(r.salesRequest||'-')}<br>
+        <b>안전예방:</b> ${App.util.esc(r.safetyPrevention||'-')}<br>
+        <b>매장환경:</b> ${App.util.esc(r.storeEnvironment||'-')}<br>
+        <b>매니저명:</b> ${App.util.esc(r.managerName||'-')}
+      </div></td></tr>`;
+    }
+  });
+  html += '</tbody></table></div></div>';
+  return html;
+};
+
+/* ------------------------- 10. 시작 ------------------------- */
+UI.init();
+
+</script>
+</body>
+</html>
