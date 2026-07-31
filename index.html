@@ -6,6 +6,26 @@
 <title>행사자 성장관리 시스템</title>
 <!-- SheetJS(xlsx) 라이브러리: 엑셀(.xlsx/.xls) 파일을 ArrayBuffer로 읽어 파싱하기 위해 사용합니다. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+   <!-- Firebase SDK (CDN) -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
+<script>
+  // Firebase 설정 (여기에 본인 코드 넣기)
+  const firebaseConfig = {
+    apiKey: "AIzaSyBH8GZEKOL01WJonIdaoaKx2LsKcAamwos",
+    authDomain: "promoter-app-986d0.firebaseapp.com",
+    projectId: "promoter-app-986d0",
+    storageBucket: "promoter-app-986d0.firebasestorage.app",
+    messagingSenderId: "645838277395",
+    appId: "1:645838277395:web:9c32530c619d3b9923e8e6",
+    measurementId: "G-2ZTXR50CNX"
+  };
+
+  // Firebase 초기화
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+</script>
 <style>
 /* =========================================================================
    행사자 성장관리 시스템 - 전역 스타일
