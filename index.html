@@ -6,26 +6,6 @@
 <title>행사자 성장관리 시스템</title>
 <!-- SheetJS(xlsx) 라이브러리: 엑셀(.xlsx/.xls) 파일을 ArrayBuffer로 읽어 파싱하기 위해 사용합니다. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-   <!-- Firebase SDK (CDN) -->
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-
-<script>
-  // Firebase 설정 (여기에 본인 코드 넣기)
-  const firebaseConfig = {
-    apiKey: "AIzaSyBH8GZEKOL01WJonIdaoaKx2LsKcAamwos",
-    authDomain: "promoter-app-986d0.firebaseapp.com",
-    projectId: "promoter-app-986d0",
-    storageBucket: "promoter-app-986d0.firebasestorage.app",
-    messagingSenderId: "645838277395",
-    appId: "1:645838277395:web:9c32530c619d3b9923e8e6",
-    measurementId: "G-2ZTXR50CNX"
-  };
-
-  // Firebase 초기화
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
-</script>
 <style>
 /* =========================================================================
    행사자 성장관리 시스템 - 전역 스타일
@@ -351,13 +331,21 @@ const App = {};
 App.DB_KEY = 'promoterGrowthDB_v1';
 App.THEME_KEY = 'promoterGrowthTheme_v1';
 
+// 츄비님 구글시트 CSV 링크. publish(pub?output=csv) 방식은 googleusercontent.com으로 리다이렉트되며
+// CORS 헤더가 없어 fetch가 차단되므로, CORS를 지원하는 gviz 방식으로 대신 사용합니다.
+App.DEFAULT_SHEET_URLS = {
+  records: 'https://docs.google.com/spreadsheets/d/1X3lir7_1jRdrXMli7cZyYqfqGzrraqrZoU-9uJFG57Y/gviz/tq?tqx=out:csv&gid=0',
+  reports: 'https://docs.google.com/spreadsheets/d/1ZKWQwC3STgr0klhOTXHpdvfPV20nwQUj2-14Q84IGJ8/gviz/tq?tqx=out:csv&gid=1204690902'
+};
+
 App.defaultDB = function(){
   return {
     staff: [],
     records: [], // 샘표 전남지역 유인행사 실적 레코드 (엑셀 Import 결과, 행 단위 원본 데이터)
     activityReports: [], // 매니저 작성 활동일보 (엑셀 Import 결과, 행사자와 matchedStaffId로 연결)
     nameAliasMap: {}, // 활동일보 "사원명" 원본 텍스트 -> 행사자 staffId 매핑 (한번 수동연결하면 이후 자동 적용)
-    meta:{ lastBackup:null, schemaVersion:3, lastActivityUpload:null }
+    meta:{ lastBackup:null, schemaVersion:3, lastActivityUpload:null,
+      sheetUrls: Object.assign({}, App.DEFAULT_SHEET_URLS), lastSheetSync:null } // 구글시트 publish-to-web CSV 동기화 설정
   };
 };
 
@@ -386,6 +374,12 @@ App.load = function(){
   if(!App.db.nameAliasMap || typeof App.db.nameAliasMap!=='object' || Array.isArray(App.db.nameAliasMap)) App.db.nameAliasMap = {};
   if(!App.db.meta || typeof App.db.meta!=='object') App.db.meta = { lastBackup:null, schemaVersion:3, lastActivityUpload:null };
   if(App.db.meta.lastActivityUpload===undefined) App.db.meta.lastActivityUpload = null;
+  if(!App.db.meta.sheetUrls || typeof App.db.meta.sheetUrls!=='object') App.db.meta.sheetUrls = Object.assign({}, App.DEFAULT_SHEET_URLS);
+  if(!App.db.meta.sheetUrls.records && !App.db.meta.sheetUrls.reports) App.db.meta.sheetUrls = Object.assign({}, App.DEFAULT_SHEET_URLS);
+  // 마이그레이션: 예전에 저장된 publish(pub?output=csv) 링크는 CORS 차단으로 항상 실패하므로 gviz 링크로 자동 교체
+  if((App.db.meta.sheetUrls.records||'').includes('pub?output=csv')) App.db.meta.sheetUrls.records = App.DEFAULT_SHEET_URLS.records;
+  if((App.db.meta.sheetUrls.reports||'').includes('pub?output=csv')) App.db.meta.sheetUrls.reports = App.DEFAULT_SHEET_URLS.reports;
+  if(App.db.meta.lastSheetSync===undefined) App.db.meta.lastSheetSync = null;
   App.db.meta.schemaVersion = 3;
 
   try{
@@ -708,6 +702,12 @@ UI.init = function(){
     const parts = location.hash.replace('#/','').split('/').filter(Boolean);
     App.route = { name: parts[0]||'dashboard', staffId: parts[1]||null, tab: parts[2]||'goal' };
     UI.render();
+
+    // 구글시트 주소가 등록되어 있으면 백그라운드에서 조용히 자동 동기화 (실패해도 앱 사용에는 지장 없음)
+    const su = App.db.meta.sheetUrls;
+    if(su && (su.records || su.reports)){
+      Actions.syncGoogleSheets(true).catch(e=>console.error('자동 동기화 실패', e));
+    }
   }catch(e){
     console.error('앱 초기화 중 오류가 발생했습니다:', e);
     const view = document.getElementById('view');
@@ -1279,6 +1279,29 @@ Views.dataManage = function(){
     </div>
   </div>
 
+  <div class="section-title">🔗 구글시트 자동 동기화</div>
+  <div class="card">
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6;">
+      구글시트를 "파일 → 웹에 게시 → CSV"로 게시한 링크를 등록하면, 폰/PC 어디서든 이 앱을 열 때마다
+      같은 구글시트 데이터를 자동으로 불러옵니다. (읽기 전용 — 앱에서 시트로 다시 쓰지는 않습니다)
+    </div>
+    <div class="field">
+      <label class="field-label">유인행사 실적 시트 CSV 링크</label>
+      <input id="f_sheetUrlRecords" type="text" placeholder="https://docs.google.com/.../pub?output=csv" value="${App.util.esc((App.db.meta.sheetUrls&&App.db.meta.sheetUrls.records)||'')}">
+    </div>
+    <div class="field">
+      <label class="field-label">활동일보 시트 CSV 링크</label>
+      <input id="f_sheetUrlReports" type="text" placeholder="https://docs.google.com/.../pub?output=csv" value="${App.util.esc((App.db.meta.sheetUrls&&App.db.meta.sheetUrls.reports)||'')}">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn" onclick="Actions.saveSheetUrls()">💾 주소 저장</button>
+      <button class="btn primary" onclick="Actions.syncGoogleSheets(false)">🔄 지금 동기화</button>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-secondary);margin-top:10px;">
+      마지막 동기화: ${App.db.meta.lastSheetSync || '없음'}
+    </div>
+  </div>
+
   <div class="section-title">📊 실적 엑셀 Import (샘표 전남지역 유인행사)</div>
   <div class="grid cols-2">
     <div class="card">
@@ -1834,6 +1857,54 @@ Actions._detectRecordHeaderRow = function(rawRows){
   return bestScore>=2 ? bestIdx : -1;
 };
 
+// rawRows(배열의 배열) 하나에서 실적 데이터를 추출하는 공용 로직. 엑셀 시트든 구글시트 CSV든
+// 동일한 형태(header:1 스타일 배열)로만 넘겨주면 똑같이 동작합니다.
+Actions._extractRecordRows = function(rawRows, sourceLabel){
+  const errors = [];
+  const headerIdx = Actions._detectRecordHeaderRow(rawRows);
+  if(headerIdx===-1){
+    return { rows:[], errors:[`[${sourceLabel}] 인식 가능한 헤더(행사자이름/YEAR/MONTH 등)를 찾지 못했습니다.`] };
+  }
+  const headerRow = rawRows[headerIdx].map(h=>String(h||''));
+  const colMap = App._buildRecordColumnMap(headerRow);
+  const rows = [];
+
+  rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
+    if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; // 완전히 빈 행은 조용히 건너뜀
+
+    const raw = {};
+    Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
+
+    const staffName = String(raw.staffName||'').trim();
+    if(!staffName) return; // 행사자이름 없는 행은 조용히 건너뜀
+
+    const year = parseInt(raw.year, 10);
+    const month = parseInt(raw.month, 10);
+    if(!year || !month || month<1 || month>12){
+      errors.push(`[${sourceLabel}] ${headerIdx+rIdx+2}행: YEAR/MONTH를 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
+      return;
+    }
+
+    const target = App.util.parseNumberLoose(raw.target);
+    const totalSales = App.util.parseNumberLoose(raw.totalSales);
+    // ★ 검증된 계산 로직: 달성률은 원본 "달성률" 컬럼값을 그대로 사용합니다.
+    //   총판매금액÷목표로 재계산하지 않습니다. 값이 없거나 인식 불가하면 이 행은 건너뜁니다.
+    const rate = App.util.parseAchievementRate(raw.achievementRate);
+    if(rate===null || rate===undefined){
+      errors.push(`[${sourceLabel}] ${headerIdx+rIdx+2}행: 달성률 값을 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
+      return;
+    }
+
+    rows.push({
+      id: App.uid('rec'),
+      staffName, year, month, ym: `${year}-${String(month).padStart(2,'0')}`,
+      target, totalSales, achievementRate: rate
+    });
+  });
+
+  return { rows, errors };
+};
+
 Actions.importRecordsExcel = function(file){
   if(!file) return;
   const fname = file.name.toLowerCase();
@@ -1861,48 +1932,12 @@ Actions.importRecordsExcel = function(file){
 
       workbook.SheetNames.forEach(sheetName=>{
         const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header:1, defval:'', raw:true });
-        const headerIdx = Actions._detectRecordHeaderRow(rawRows);
-        if(headerIdx===-1) return; // 알아볼 수 있는 헤더가 없는 시트는 조용히 건너뜀
-
-        const headerRow = rawRows[headerIdx].map(h=>String(h||''));
-        const colMap = App._buildRecordColumnMap(headerRow);
-        let sheetCount = 0;
-
-        rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
-          if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; // 완전히 빈 행은 조용히 건너뜀
-
-          const raw = {};
-          Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
-
-          const staffName = String(raw.staffName||'').trim();
-          if(!staffName) return; // 행사자이름 없는 행은 조용히 건너뜀
-
-          const year = parseInt(raw.year, 10);
-          const month = parseInt(raw.month, 10);
-          if(!year || !month || month<1 || month>12){
-            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: YEAR/MONTH를 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
-            return;
-          }
-
-          const target = App.util.parseNumberLoose(raw.target);
-          const totalSales = App.util.parseNumberLoose(raw.totalSales);
-          // ★ 검증된 계산 로직: 달성률은 엑셀 "달성률" 컬럼값을 그대로 사용합니다.
-          //   총판매금액÷목표로 재계산하지 않습니다. 값이 없거나 인식 불가하면 이 행은 건너뜁니다.
-          const rate = App.util.parseAchievementRate(raw.achievementRate);
-          if(rate===null || rate===undefined){
-            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 달성률 값을 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
-            return;
-          }
-
-          allRows.push({
-            id: App.uid('rec'),
-            staffName, year, month, ym: `${year}-${String(month).padStart(2,'0')}`,
-            target, totalSales, achievementRate: rate
-          });
-          sheetCount++;
-        });
-
-        if(sheetCount>0) sheetReport.push({ sheetName, count:sheetCount });
+        const { rows, errors: rowErrors } = Actions._extractRecordRows(rawRows, sheetName);
+        errors.push(...rowErrors);
+        if(rows.length>0){
+          allRows = allRows.concat(rows);
+          sheetReport.push({ sheetName, count: rows.length });
+        }
       });
 
       if(allRows.length===0){
@@ -1921,7 +1956,7 @@ Actions.importRecordsExcel = function(file){
 
 // YEAR+MONTH가 같은 기존 데이터가 있으면 이번 업로드 내용으로 그 달 전체를 교체(업데이트)하고,
 // 다른 달의 기존 데이터는 그대로 유지합니다 (매달 새 엑셀을 올리는 실제 업무 흐름에 맞춘 전략).
-Actions._mergeRecordsByMonth = function(newRows, sheetReport, errors){
+Actions._mergeRecordsByMonth = function(newRows, sheetReport, errors, silent){
   const ymGroups = {};
   newRows.forEach(r=>{ if(!ymGroups[r.ym]) ymGroups[r.ym]=[]; ymGroups[r.ym].push(r); });
 
@@ -1951,7 +1986,7 @@ Actions._mergeRecordsByMonth = function(newRows, sheetReport, errors){
   App.invalidateAggCache();
   App.save();
 
-  Actions._showImportSummary(summary, sheetReport, updatedMonths, newMonths, errors);
+  if(!silent) Actions._showImportSummary(summary, sheetReport, updatedMonths, newMonths, errors);
   UI.render();
 };
 
@@ -2089,6 +2124,60 @@ Views._reportStaging = null; // { fileName, rows:[...], errors:[...] }
 Views._reportListState = { tab:'list', q:'', store:'', manager:'', ym:'', signal:'' };
 Views._reportExpandedId = null;
 
+// rawRows(배열의 배열) 하나에서 활동일보 데이터를 추출하는 공용 로직. 엑셀 시트든 구글시트 CSV든 동일하게 동작합니다.
+Actions._extractReportRows = function(rawRows, sourceLabel){
+  const errors = [];
+  const headerIdx = Actions._detectReportHeaderRow(rawRows);
+  if(headerIdx===-1){
+    return { rows:[], errors:[`[${sourceLabel}] 인식 가능한 헤더(사원명/방문일 등)를 찾지 못했습니다.`] };
+  }
+  const headerRow = rawRows[headerIdx].map(h=>String(h||''));
+  const colMap = App._buildReportColumnMap(headerRow);
+  const rows = [];
+
+  rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
+    if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; // 완전히 빈 행은 조용히 건너뜀
+
+    const raw = {};
+    Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
+
+    const staffName = String(raw.staffName||'').trim();
+    if(!staffName){
+      errors.push(`[${sourceLabel}] ${headerIdx+rIdx+2}행: 사원명이 비어있어 건너뜀`);
+      return;
+    }
+
+    let visitDate = App.util.normalizeExcelDate(raw.visitDate, null);
+    if(!visitDate){
+      errors.push(`[${sourceLabel}] ${headerIdx+rIdx+2}행: 방문일을 인식하지 못했습니다 (사원명: ${staffName}). 날짜 없이 기록됩니다.`);
+      visitDate = '';
+    }
+
+    const matchedStaffId = App.findStaffIdForReportName(staffName);
+
+    rows.push({
+      _tempId: App.uid('tmp'),
+      dept: String(raw.dept||'').trim(),
+      managerName: String(raw.managerName||'').trim(),
+      visitDate,
+      directStore: String(raw.directStore||'').trim(),
+      secondaryStore: String(raw.secondaryStore||'').trim(),
+      staffName,
+      matchedStaffId,
+      isMatched: !!matchedStaffId,
+      managementSignal: String(raw.managementSignal===undefined?'':raw.managementSignal).trim(),
+      storeInventory: String(raw.storeInventory===undefined?'':raw.storeInventory).trim(),
+      tastingEvent: String(raw.tastingEvent===undefined?'':raw.tastingEvent).trim(),
+      managerAction: String(raw.managerAction===undefined?'':raw.managerAction).trim(),
+      salesRequest: String(raw.salesRequest===undefined?'':raw.salesRequest).trim(),
+      safetyPrevention: String(raw.safetyPrevention===undefined?'':raw.safetyPrevention).trim(),
+      storeEnvironment: String(raw.storeEnvironment===undefined?'':raw.storeEnvironment).trim()
+    });
+  });
+
+  return { rows, errors };
+};
+
 Actions.importActivityReportExcel = function(file){
   if(!file) return;
   const fname = file.name.toLowerCase();
@@ -2107,56 +2196,14 @@ Actions.importActivityReportExcel = function(file){
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type:'array', cellDates:true });
 
-      const rows = [];
+      let rows = [];
       const errors = [];
 
       workbook.SheetNames.forEach(sheetName=>{
         const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header:1, defval:'', raw:true });
-        const headerIdx = Actions._detectReportHeaderRow(rawRows);
-        if(headerIdx===-1) return; // 이 시트에는 활동일보 컬럼이 없음 -> 건너뜀
-
-        const headerRow = rawRows[headerIdx].map(h=>String(h||''));
-        const colMap = App._buildReportColumnMap(headerRow);
-
-        rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
-          if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; // 완전히 빈 행은 조용히 건너뜀
-
-          const raw = {};
-          Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
-
-          const staffName = String(raw.staffName||'').trim();
-          if(!staffName){
-            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 사원명이 비어있어 건너뜀`);
-            return;
-          }
-
-          let visitDate = App.util.normalizeExcelDate(raw.visitDate, null);
-          if(!visitDate){
-            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 방문일을 인식하지 못했습니다 (사원명: ${staffName}). 날짜 없이 기록됩니다.`);
-            visitDate = '';
-          }
-
-          const matchedStaffId = App.findStaffIdForReportName(staffName);
-
-          rows.push({
-            _tempId: App.uid('tmp'),
-            dept: String(raw.dept||'').trim(),
-            managerName: String(raw.managerName||'').trim(),
-            visitDate,
-            directStore: String(raw.directStore||'').trim(),
-            secondaryStore: String(raw.secondaryStore||'').trim(),
-            staffName,
-            matchedStaffId,
-            isMatched: !!matchedStaffId,
-            managementSignal: String(raw.managementSignal===undefined?'':raw.managementSignal).trim(),
-            storeInventory: String(raw.storeInventory===undefined?'':raw.storeInventory).trim(),
-            tastingEvent: String(raw.tastingEvent===undefined?'':raw.tastingEvent).trim(),
-            managerAction: String(raw.managerAction===undefined?'':raw.managerAction).trim(),
-            salesRequest: String(raw.salesRequest===undefined?'':raw.salesRequest).trim(),
-            safetyPrevention: String(raw.safetyPrevention===undefined?'':raw.safetyPrevention).trim(),
-            storeEnvironment: String(raw.storeEnvironment===undefined?'':raw.storeEnvironment).trim()
-          });
-        });
+        const { rows: sheetRows, errors: rowErrors } = Actions._extractReportRows(rawRows, sheetName);
+        errors.push(...rowErrors);
+        rows = rows.concat(sheetRows);
       });
 
       if(rows.length===0){
@@ -2193,6 +2240,90 @@ Actions.handleReportDrop = function(ev){
   if(dt && dt.files && dt.files.length){
     Actions.importActivityReportExcel(dt.files[0]);
   }
+};
+
+/* =========================================================================
+   12. 구글시트(publish-to-web CSV) 동기화 - 신규 기능
+   -------------------------------------------------------------------------
+   구글시트를 "파일 > 웹에 게시 > CSV"로 게시하면 로그인 없이 읽을 수 있는
+   공개 CSV 링크가 생깁니다. 이 링크 2개(유인행사 실적 / 활동일보)를 자료관리에서
+   등록해두면, 폰이든 PC든 이 앱에 접속할 때마다 같은 구글시트 데이터를 불러와
+   자동으로 반영합니다 (엑셀 파일을 매번 업로드하지 않아도 됨).
+   - 읽기 전용입니다 (앱에서 구글시트로 다시 쓰지는 않습니다).
+   - 기존 엑셀 업로드 기능과 동일한 컬럼 인식/그룹계산 로직을 그대로 재사용합니다.
+   ========================================================================= */
+
+// CSV 텍스트를 가져와 배열의 배열(rawRows) 형태로 반환
+App.util.fetchCsvRows = async function(url){
+  const res = await fetch(url, { cache:'no-store' });
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  const text = await res.text();
+  return App.csv.parseCSV(text);
+};
+
+// 두 구글시트를 한 번에 동기화. silent=true면 결과 팝업 없이 조용히 처리(자동 동기화용).
+Actions.syncGoogleSheets = async function(silent){
+  const urls = (App.db.meta && App.db.meta.sheetUrls) || {};
+  if(!urls.records && !urls.reports){
+    if(!silent) App.util.toast('구글시트 주소가 설정되어 있지 않습니다. 자료 관리에서 먼저 등록해주세요.');
+    return;
+  }
+
+  const result = { recordCount:0, recordErrors:[], reportSummary:null, failed:[] };
+
+  if(urls.records){
+    try{
+      const rawRows = await App.util.fetchCsvRows(urls.records);
+      const { rows, errors } = Actions._extractRecordRows(rawRows, '유인행사 시트');
+      result.recordErrors = errors;
+      if(rows.length>0){
+        Actions._mergeRecordsByMonth(rows, [{ sheetName:'유인행사 시트', count: rows.length }], errors, true /*silent*/);
+        result.recordCount = rows.length;
+      }
+    }catch(err){
+      console.error('유인행사 시트 동기화 실패', err);
+      result.failed.push('유인행사 실적 시트: ' + err.message);
+    }
+  }
+
+  if(urls.reports){
+    try{
+      const rawRows = await App.util.fetchCsvRows(urls.reports);
+      const { rows, errors } = Actions._extractReportRows(rawRows, '활동일보 시트');
+      if(rows.length>0){
+        Views._reportStaging = { fileName:'구글시트 동기화', rows, errors };
+        result.reportSummary = Actions.commitActivityReports(true /*silent*/);
+      }
+    }catch(err){
+      console.error('활동일보 시트 동기화 실패', err);
+      result.failed.push('활동일보 시트: ' + err.message);
+    }
+  }
+
+  App.db.meta.lastSheetSync = App.util.todayStr();
+  App.save();
+  UI.render();
+
+  if(!silent){
+    let msg = '';
+    if(result.recordCount) msg += `✅ 유인행사 실적 ${result.recordCount}건 반영\n`;
+    if(result.reportSummary) msg += `✅ 활동일보 ${result.reportSummary.total}건 확인 (신규 ${result.reportSummary.added} · 업데이트 ${result.reportSummary.updated} · 중복제외 ${result.reportSummary.skipped})\n`;
+    if(result.failed.length) msg += `\n⚠️ 실패:\n` + result.failed.join('\n');
+    if(!msg) msg = '동기화할 데이터가 없습니다.';
+    UI.openModal(`<h2>구글시트 동기화 완료</h2><div class="report-box" style="white-space:pre-wrap;">${App.util.esc(msg)}</div>
+      <div class="modal-actions"><button class="btn primary" onclick="UI.closeModal()">확인</button></div>`);
+  }
+};
+
+Actions.saveSheetUrls = function(){
+  const recUrl = document.getElementById('f_sheetUrlRecords').value.trim();
+  const repUrl = document.getElementById('f_sheetUrlReports').value.trim();
+  if(!App.db.meta.sheetUrls) App.db.meta.sheetUrls = {};
+  App.db.meta.sheetUrls.records = recUrl;
+  App.db.meta.sheetUrls.reports = repUrl;
+  App.save();
+  App.util.toast('구글시트 주소가 저장되었습니다');
+  UI.render();
 };
 
 // 미리보기 화면에서 "행사자 연결" (미반영 상태의 임시 매칭)
@@ -2245,9 +2376,9 @@ Actions.confirmMatchStaff = function(rawName, staffId, mode){
 };
 
 // 미리보기 -> 실제 저장 반영
-Actions.commitActivityReports = function(){
+Actions.commitActivityReports = function(silent){
   const staging = Views._reportStaging;
-  if(!staging) return;
+  if(!staging) return null;
 
   let added=0, updated=0, skipped=0, unmatched=0;
   staging.rows.forEach(r=>{
@@ -2287,18 +2418,22 @@ Actions.commitActivityReports = function(){
 
   const total = staging.rows.length;
   Views._reportStaging = null;
+  const summary = { total, added, updated, skipped, unmatched };
 
-  UI.openModal(`
-    <h2>활동일보 업로드 완료</h2>
-    <div class="report-box" style="white-space:pre-wrap;">✅ 전체 ${total}건
+  if(!silent){
+    UI.openModal(`
+      <h2>활동일보 업로드 완료</h2>
+      <div class="report-box" style="white-space:pre-wrap;">✅ 전체 ${total}건
 ✅ 신규 등록 ${added}건
 🔄 기존 데이터 업데이트 ${updated}건
 ⏭️ 중복 제외 ${skipped}건
 ⚠️ 행사자 매칭 필요 ${unmatched}건</div>
-    <div class="modal-actions">
-      ${unmatched? `<button class="btn" onclick="UI.closeModal();Views._reportListState.tab='unmatched';UI.render();">매칭 필요 데이터 확인</button>`:''}
-      <button class="btn primary" onclick="UI.closeModal();UI.render();">확인</button>
-    </div>`);
+      <div class="modal-actions">
+        ${unmatched? `<button class="btn" onclick="UI.closeModal();Views._reportListState.tab='unmatched';UI.render();">매칭 필요 데이터 확인</button>`:''}
+        <button class="btn primary" onclick="UI.closeModal();UI.render();">확인</button>
+      </div>`);
+  }
+  return summary;
 };
 
 Actions.cancelReportStaging = function(){
