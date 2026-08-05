@@ -335,7 +335,8 @@ App.THEME_KEY = 'promoterGrowthTheme_v1';
 // CORS 헤더가 없어 fetch가 차단되므로, CORS를 지원하는 gviz 방식으로 대신 사용합니다.
 App.DEFAULT_SHEET_URLS = {
   records: 'https://docs.google.com/spreadsheets/d/1X3lir7_1jRdrXMli7cZyYqfqGzrraqrZoU-9uJFG57Y/gviz/tq?tqx=out:csv&gid=0',
-  reports: 'https://docs.google.com/spreadsheets/d/1ZKWQwC3STgr0klhOTXHpdvfPV20nwQUj2-14Q84IGJ8/gviz/tq?tqx=out:csv&gid=1204690902'
+  reports: 'https://docs.google.com/spreadsheets/d/1ZKWQwC3STgr0klhOTXHpdvfPV20nwQUj2-14Q84IGJ8/gviz/tq?tqx=out:csv&gid=1204690902',
+  goals: 'https://docs.google.com/spreadsheets/d/1NxBgLxxG1PKGeLg_1kGT9QMZqVyJ2xA6bPjh4adM2v8/gviz/tq?tqx=out:csv&gid=7685198'
 };
 
 App.defaultDB = function(){
@@ -379,6 +380,7 @@ App.load = function(){
   // 마이그레이션: 예전에 저장된 publish(pub?output=csv) 링크는 CORS 차단으로 항상 실패하므로 gviz 링크로 자동 교체
   if((App.db.meta.sheetUrls.records||'').includes('pub?output=csv')) App.db.meta.sheetUrls.records = App.DEFAULT_SHEET_URLS.records;
   if((App.db.meta.sheetUrls.reports||'').includes('pub?output=csv')) App.db.meta.sheetUrls.reports = App.DEFAULT_SHEET_URLS.reports;
+  if(!App.db.meta.sheetUrls.goals) App.db.meta.sheetUrls.goals = App.DEFAULT_SHEET_URLS.goals;
   if(App.db.meta.lastSheetSync===undefined) App.db.meta.lastSheetSync = null;
   App.db.meta.schemaVersion = 3;
 
@@ -1063,7 +1065,9 @@ Views._tabGoal = function(s){
     goals.slice().reverse().forEach(gl=>{
       html += `<div class="item-row">
         <div class="check ${gl.done?'done':''}" onclick="Actions.toggleGoal('${s.id}','${gl.id}')">${gl.done?'✓':''}</div>
-        <div class="content"><div class="title ${gl.done?'strike':''}">${App.util.esc(gl.title)}</div><div class="meta">등록일 ${gl.createdAt}</div></div>
+        <div class="content"><div class="title ${gl.done?'strike':''}">${App.util.esc(gl.title)}</div>
+          <div class="meta">등록일 ${gl.createdAt}${gl.source? ' · '+App.util.esc(gl.source):''}</div>
+          ${gl.reason? `<div class="meta">💬 ${App.util.esc(gl.reason)}</div>`:''}</div>
         <div class="actions"><button class="icon-btn" onclick="Actions.deleteGoal('${s.id}','${gl.id}')">🗑️</button></div>
       </div>`;
     });
@@ -1293,6 +1297,10 @@ Views.dataManage = function(){
       <label class="field-label">활동일보 시트 CSV 링크</label>
       <input id="f_sheetUrlReports" type="text" placeholder="https://docs.google.com/.../pub?output=csv" value="${App.util.esc((App.db.meta.sheetUrls&&App.db.meta.sheetUrls.reports)||'')}">
     </div>
+    <div class="field">
+      <label class="field-label">개인목표 시트 CSV 링크 (구글폼 응답: 성함/목표/이유)</label>
+      <input id="f_sheetUrlGoals" type="text" placeholder="https://docs.google.com/.../gviz/tq?tqx=out:csv" value="${App.util.esc((App.db.meta.sheetUrls&&App.db.meta.sheetUrls.goals)||'')}">
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn" onclick="Actions.saveSheetUrls()">💾 주소 저장</button>
       <button class="btn primary" onclick="Actions.syncGoogleSheets(false)">🔄 지금 동기화</button>
@@ -1369,7 +1377,7 @@ Actions.copyText = function(elId){
 };
 
 /* ===== 행사자 등록/수정 ===== */
-Actions.openStaffForm = function(staffId){
+   Actions.openStaffForm = function(staffId){
   const s = staffId ? App.db.staff.find(x=>x.id===staffId) : null;
   UI.openModal(`
     <h2>${s? '행사자 정보 수정':'행사자 추가'}</h2>
@@ -2106,16 +2114,33 @@ App._reportKey = function(r){
   return [r.visitDate||'', r.staffName||'', r.directStore||'', r.secondaryStore||'', r.managerName||''].join('|');
 };
 
-// 활동일보의 "사원명"으로 행사자를 찾는다: 정확히 일치 -> 저장된 별칭매핑 -> 없으면 null(매칭 필요)
+// 이름 끝에 붙는 숫자/영문(구분코드, 예: "강명옥5", "김은주C")을 제거해 비교용 기본 이름을 만듦.
+// 동명이인이 없다는 전제 하에, 접미사가 달라도 같은 사람으로 인식하기 위해 사용합니다.
+App.util.normalizeStaffName = function(name){
+  return String(name||'').trim().replace(/[0-9A-Za-z]+$/, '').trim();
+};
+
+// 활동일보/목표시트 등의 "이름" 텍스트로 행사자를 찾는다:
+// 1) 정확히 일치  2) 저장된 별칭매핑  3) 접미사(숫자/영문) 무시 기본이름 일치(후보가 1명일 때만) → 없으면 null(매칭 필요)
 App.findStaffIdForReportName = function(rawName){
   const name = String(rawName||'').trim();
   if(!name) return null;
+
   const exact = App.db.staff.find(x=>x.name===name);
   if(exact) return exact.id;
+
   if(App.db.nameAliasMap[name]){
     const aliased = App.db.staff.find(x=>x.id===App.db.nameAliasMap[name]);
     if(aliased) return aliased.id;
   }
+
+  // 접미사(숫자/영문 코드) 무시 매칭: "강명옥" -> "강명옥5" 처럼 기본 이름이 같은 행사자를 찾음
+  const base = App.util.normalizeStaffName(name);
+  if(base){
+    const candidates = App.db.staff.filter(x=>App.util.normalizeStaffName(x.name)===base);
+    if(candidates.length===1) return candidates[0].id; // 후보가 정확히 1명일 때만 자동 매칭 (모호하면 매칭 필요로 남김)
+  }
+
   return null;
 };
 
@@ -2262,14 +2287,67 @@ App.util.fetchCsvRows = async function(url){
 };
 
 // 두 구글시트를 한 번에 동기화. silent=true면 결과 팝업 없이 조용히 처리(자동 동기화용).
+// 목표 구글폼 응답시트에서 [성함, 목표내용, 이유] 컬럼을 인식해서 개인목표로 변환
+// (열 순서가 아니라 헤더 텍스트로 인식: "성함"/"이름" 계열, "목표"가 들어간 열, "이유"가 들어간 열)
+Actions._extractGoalRows = function(rawRows, sourceLabel){
+  const errors = [];
+  if(!rawRows || rawRows.length<2) return { rows:[], errors:[`[${sourceLabel}] 데이터가 없습니다.`] };
+
+  const headerRow = (rawRows[0]||[]).map(h=>String(h||''));
+  let nameIdx=-1, goalIdx=-1, reasonIdx=-1;
+  headerRow.forEach((h,idx)=>{
+    const nh = App.util.normalizeHeaderStr(h);
+    if(nameIdx===-1 && /성함|이름|성명/.test(h)) nameIdx = idx;
+    if(goalIdx===-1 && h.includes('목표')) goalIdx = idx;
+    if(reasonIdx===-1 && h.includes('이유')) reasonIdx = idx;
+  });
+  if(nameIdx===-1 || goalIdx===-1){
+    return { rows:[], errors:[`[${sourceLabel}] "성함"/"목표" 컬럼을 찾지 못했습니다.`] };
+  }
+
+  const rows = [];
+  rawRows.slice(1).forEach((rowArr, rIdx)=>{
+    if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return;
+    const staffNameRaw = String(rowArr[nameIdx]||'').trim();
+    const title = String(rowArr[goalIdx]||'').trim();
+    const reason = reasonIdx>=0 ? String(rowArr[reasonIdx]||'').trim() : '';
+    if(!staffNameRaw || !title) return; // 이름/목표 둘 다 있어야 유효한 행
+
+    const matchedStaffId = App.findStaffIdForReportName(staffNameRaw);
+    rows.push({ staffNameRaw, title, reason, matchedStaffId });
+  });
+
+  return { rows, errors };
+};
+
+// 목표시트에서 읽어온 행들을 각 행사자의 개인목표에 반영 (같은 제목의 목표가 이미 있으면 건너뜀 = 재동기화 시 중복방지)
+Actions._applyGoalRows = function(rows){
+  let added=0, unmatched=0;
+  const unmatchedNames = new Set();
+  rows.forEach(r=>{
+    if(!r.matchedStaffId){ unmatched++; unmatchedNames.add(r.staffNameRaw); return; }
+    const s = App.db.staff.find(x=>x.id===r.matchedStaffId);
+    if(!s) return;
+    if(!s.goals) s.goals = [];
+    const already = s.goals.some(g=>g.title===r.title);
+    if(already) return;
+    s.goals.push({
+      id: App.uid('goal'), title: r.title, reason: r.reason||'', done:false,
+      createdAt: App.util.todayStr(), source:'설문'
+    });
+    added++;
+  });
+  return { added, unmatched, unmatchedNames:[...unmatchedNames] };
+};
+
 Actions.syncGoogleSheets = async function(silent){
   const urls = (App.db.meta && App.db.meta.sheetUrls) || {};
-  if(!urls.records && !urls.reports){
+  if(!urls.records && !urls.reports && !urls.goals){
     if(!silent) App.util.toast('구글시트 주소가 설정되어 있지 않습니다. 자료 관리에서 먼저 등록해주세요.');
     return;
   }
 
-  const result = { recordCount:0, recordErrors:[], reportSummary:null, failed:[] };
+  const result = { recordCount:0, recordErrors:[], reportSummary:null, goalSummary:null, failed:[] };
 
   if(urls.records){
     try{
@@ -2300,6 +2378,19 @@ Actions.syncGoogleSheets = async function(silent){
     }
   }
 
+  if(urls.goals){
+    try{
+      const rawRows = await App.util.fetchCsvRows(urls.goals);
+      const { rows } = Actions._extractGoalRows(rawRows, '목표 시트');
+      if(rows.length>0){
+        result.goalSummary = Actions._applyGoalRows(rows);
+      }
+    }catch(err){
+      console.error('목표 시트 동기화 실패', err);
+      result.failed.push('목표 시트: ' + err.message);
+    }
+  }
+
   App.db.meta.lastSheetSync = App.util.todayStr();
   App.save();
   UI.render();
@@ -2308,6 +2399,7 @@ Actions.syncGoogleSheets = async function(silent){
     let msg = '';
     if(result.recordCount) msg += `✅ 유인행사 실적 ${result.recordCount}건 반영\n`;
     if(result.reportSummary) msg += `✅ 활동일보 ${result.reportSummary.total}건 확인 (신규 ${result.reportSummary.added} · 업데이트 ${result.reportSummary.updated} · 중복제외 ${result.reportSummary.skipped})\n`;
+    if(result.goalSummary) msg += `✅ 개인목표 신규 ${result.goalSummary.added}건 추가${result.goalSummary.unmatched? ` (매칭 안된 이름 ${result.goalSummary.unmatched}건: ${result.goalSummary.unmatchedNames.join(', ')})`:''}\n`;
     if(result.failed.length) msg += `\n⚠️ 실패:\n` + result.failed.join('\n');
     if(!msg) msg = '동기화할 데이터가 없습니다.';
     UI.openModal(`<h2>구글시트 동기화 완료</h2><div class="report-box" style="white-space:pre-wrap;">${App.util.esc(msg)}</div>
@@ -2318,9 +2410,11 @@ Actions.syncGoogleSheets = async function(silent){
 Actions.saveSheetUrls = function(){
   const recUrl = document.getElementById('f_sheetUrlRecords').value.trim();
   const repUrl = document.getElementById('f_sheetUrlReports').value.trim();
+  const goalUrl = document.getElementById('f_sheetUrlGoals').value.trim();
   if(!App.db.meta.sheetUrls) App.db.meta.sheetUrls = {};
   App.db.meta.sheetUrls.records = recUrl;
   App.db.meta.sheetUrls.reports = repUrl;
+  App.db.meta.sheetUrls.goals = goalUrl;
   App.save();
   App.util.toast('구글시트 주소가 저장되었습니다');
   UI.render();
@@ -2662,3 +2756,4 @@ UI.init();
 </script>
 </body>
 </html>
+
