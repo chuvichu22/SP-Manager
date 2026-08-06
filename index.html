@@ -670,6 +670,76 @@ App.groupMeta = function(g){
   return {cls:'neutral', label:'집계제외(10일 미만)'};
 };
 
+/* ------------------------- 3-1. 이번 달 변동사항 (전월 대비 자동 비교) -------------------------
+   업로드된 월 목록(App._allYMs)에서 선택된 월의 "바로 이전 업로드월"과 비교합니다
+   (달력상 전월이 아니라, 실제 데이터가 있는 직전 월 — 중간에 빠진 달이 있어도 안전하게 동작).
+   그룹/등급은 "누적(YTD)" 기준으로, 급상승/급하락 분석은 "그 달 단독" 실적 기준으로 비교합니다. */
+App.getPrevYM = function(ym){
+  const idx = App._allYMs.indexOf(ym);
+  if(idx<=0) return null;
+  return App._allYMs[idx-1];
+};
+
+App._tierOf = function(group){
+  return group==='우수' ? 2 : group==='성장' ? 1 : group==='개선' ? 0 : null; // 제외=null(비교대상 아님)
+};
+App._tierLabel = function(t){ return t===2?'상':t===1?'중':'하'; };
+
+App.buildMonthlyChanges = function(ym){
+  const prevYm = App.getPrevYM(ym);
+  if(!prevYm) return null; // 비교할 이전 업로드월이 없음 (최소 2개월 데이터 필요)
+
+  const curCum = App.getCumulativeAgg(ym).byStaff;
+  const prevCum = App.getCumulativeAgg(prevYm).byStaff;
+  const curMonthly = App.getMonthlyAgg(ym).byStaff;
+  const prevMonthly = App.getMonthlyAgg(prevYm).byStaff;
+
+  const allNames = new Set([...Object.keys(curCum), ...Object.keys(prevCum)]);
+  const improveIn = [], improveOut = [], gradeUp = [], gradeDown = [];
+
+  allNames.forEach(name=>{
+    const curA = curCum[name], prevA = prevCum[name];
+    const curTier = curA ? App._tierOf(curA.group) : null;
+    const prevTier = prevA ? App._tierOf(prevA.group) : null;
+    if(curTier===null || prevTier===null || curTier===prevTier) return;
+
+    if(curA.group==='개선' || prevA.group==='개선'){
+      if(curA.group==='개선') improveIn.push(name); else improveOut.push(name);
+    }else if(curTier>prevTier){
+      gradeUp.push({ name, from:App._tierLabel(prevTier), to:App._tierLabel(curTier) });
+    }else{
+      gradeDown.push({ name, from:App._tierLabel(prevTier), to:App._tierLabel(curTier) });
+    }
+  });
+
+  // 신규 등록: 이전 업로드월까지 레코드가 전혀 없다가 이번 달 처음 등장
+  // 활동 중단(퇴사 추정): 이전 업로드월까지는 레코드가 있었는데 이번 달(단독) 레코드가 없음
+  const newlyRegistered = [], departed = [];
+  App.db.staff.forEach(s=>{
+    const hadBefore = App.db.records.some(r=>r.staffName===s.name && r.ym<=prevYm);
+    const hasThisMonth = (App._byYM[ym]||[]).some(r=>r.staffName===s.name);
+    if(!hadBefore && hasThisMonth) newlyRegistered.push(s.name);
+    if(hadBefore && !hasThisMonth) departed.push(s.name);
+  });
+
+  // 눈에 띄는 실적 변화: 그룹 이동이 없어도, 그 달 단독 평균달성률/총판매금액이 크게 변한 사람을 자동 감지
+  // 기준(고정): 평균달성률 20%p 이상 변화 또는 총판매금액 30% 이상 변화
+  const risers = [], decliners = [];
+  Object.keys(curMonthly).forEach(name=>{
+    const cur = curMonthly[name], prev = prevMonthly[name];
+    if(!prev || !cur || prev.days===0 || cur.days===0) return;
+    const rateDiff = cur.avgRate - prev.avgRate;
+    const salesPct = prev.totalSales>0 ? Math.round((cur.totalSales-prev.totalSales)/prev.totalSales*100) : null;
+    const item = { name, rateDiff, salesPct, curRate:cur.avgRate, prevRate:prev.avgRate };
+    if(rateDiff>=20 || (salesPct!==null && salesPct>=30)) risers.push(item);
+    else if(rateDiff<=-20 || (salesPct!==null && salesPct<=-30)) decliners.push(item);
+  });
+  risers.sort((a,b)=>b.rateDiff-a.rateDiff);
+  decliners.sort((a,b)=>a.rateDiff-b.rateDiff);
+
+  return { ym, prevYm, improveIn, improveOut, gradeUp, gradeDown, newlyRegistered, departed, risers, decliners };
+};
+
 /* ------------------------- 4. 라우터 ------------------------- */
 App.route = { name:'dashboard', staffId:null, tab:'goal' };
 
@@ -877,13 +947,18 @@ Views.dashboard = function(){
 
   html += `<div class="grid cols-4" style="margin-top:16px;">
     <div class="card stat-card"><div class="icon">👥</div><div class="label">전체 행사자 (~${ym})</div><div class="value">${total}<small> 명</small></div></div>
-    <div class="card stat-card"><div class="icon">🏆</div><div class="label">우수 그룹</div><div class="value" style="color:var(--good)">${overall.good}<small> 명</small></div></div>
-    <div class="card stat-card"><div class="icon">🌱</div><div class="label">성장 그룹</div><div class="value" style="color:var(--growth)">${overall.growth}<small> 명</small></div></div>
-    <div class="card stat-card"><div class="icon">⚠️</div><div class="label">개선 그룹</div><div class="value" style="color:var(--improve)">${overall.improve}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="icon">🏆</div><div class="label">우수 그룹</div><div class="value" style="color:var(--good)">${overall.good}<small> 명</small></div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">달성률 125%↑ · 16만미만 35%↓</div></div>
+    <div class="card stat-card"><div class="icon">🌱</div><div class="label">성장 그룹</div><div class="value" style="color:var(--growth)">${overall.growth}<small> 명</small></div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">달성률 95%↑ · 16만미만 60%↓</div></div>
+    <div class="card stat-card"><div class="icon">⚠️</div><div class="label">개선 그룹</div><div class="value" style="color:var(--improve)">${overall.improve}<small> 명</small></div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">그 외 (95%↓ 또는 16만미만 60%↑)</div></div>
   </div>`;
   if(overall.excluded){
     html += `<div style="font-size:12.5px;color:var(--text-secondary);margin-top:8px;">제외 ${overall.excluded}명 (누적 행사일수 10일 미만)</div>`;
   }
+
+  html += Views._monthlyChangesHtml(ym);
 
   ['우수','성장','개선'].forEach(g=>{
     const names = Object.keys(byStaff).filter(n=>byStaff[n].group===g).sort((a,b)=>byStaff[b].avgRate-byStaff[a].avgRate);
@@ -914,7 +989,60 @@ Views.dashboard = function(){
   document.getElementById('view').innerHTML = html;
 };
 
-/* === 8-2. 행사자 목록 === */
+// 전월 대비 변동사항을 카드 HTML로 렌더링 (비교할 이전 업로드월이 없으면 빈 문자열 반환)
+Views._monthlyChangesHtml = function(ym){
+  const c = App.buildMonthlyChanges(ym);
+  if(!c) return ''; // 업로드된 월이 1개뿐이면 비교 불가 -> 표시 안 함
+
+  const nameLink = (name)=>{
+    const s = App.db.staff.find(x=>x.name===name);
+    return s ? `<a href="javascript:void(0)" onclick="App.navigate('staffDetail','${s.id}')" style="color:inherit;text-decoration:underline;">${App.util.esc(name)}</a>` : App.util.esc(name);
+  };
+
+  const hasAnyChange = c.improveIn.length || c.improveOut.length || c.gradeUp.length || c.gradeDown.length
+    || c.newlyRegistered.length || c.departed.length;
+
+  let html = `<div class="card" style="margin-top:16px;">
+    <div style="font-weight:800;font-size:15px;margin-bottom:10px;">📢 이번 달 변동사항 <span style="font-weight:500;font-size:12.5px;color:var(--text-secondary);">(${c.prevYm} → ${c.ym})</span></div>`;
+
+  if(!hasAnyChange){
+    html += `<div style="font-size:13px;color:var(--text-secondary);">변동사항이 없습니다.</div>`;
+  }else{
+    const line = (icon, color, text) => `<div style="padding:6px 0;font-size:13.5px;color:${color};">${icon} ${text}</div>`;
+    c.improveOut.forEach(name=> html += line('➖','var(--good)', `개선그룹 제외 : ${nameLink(name)}`));
+    c.improveIn.forEach(name=> html += line('➕','var(--improve)', `개선그룹 편입 : ${nameLink(name)}`));
+    c.gradeUp.forEach(x=> html += line('⬆','var(--good)', `역량등급 상승 : ${nameLink(x.name)} (${x.from} → ${x.to})`));
+    c.gradeDown.forEach(x=> html += line('⬇','var(--improve)', `역량등급 하락 : ${nameLink(x.name)} (${x.from} → ${x.to})`));
+    c.newlyRegistered.forEach(name=> html += line('👤','var(--text-primary)', `신규 등록 : ${nameLink(name)}`));
+    c.departed.forEach(name=> html += line('👋','var(--text-primary)', `활동 중단(퇴사 추정) : ${nameLink(name)}`));
+  }
+  html += '</div>';
+
+  if(c.risers.length){
+    html += `<div class="card" style="margin-top:12px;border:1px solid var(--good);">
+      <div style="font-weight:800;font-size:15px;margin-bottom:10px;color:var(--good);">🔥 이번 달 성장한 행사자</div>`;
+    c.risers.forEach(x=>{
+      const parts = [`평균달성률 ${x.prevRate}% → ${x.curRate}% (${x.rateDiff>=0?'+':''}${x.rateDiff}%p)`];
+      if(x.salesPct!==null) parts.push(`매출 ${x.salesPct>=0?'+':''}${x.salesPct}%`);
+      html += `<div style="padding:6px 0;font-size:13.5px;">${nameLink(x.name)} : ${parts.join(' · ')}</div>`;
+    });
+    html += '</div>';
+  }
+  if(c.decliners.length){
+    html += `<div class="card" style="margin-top:12px;border:1px solid var(--improve);">
+      <div style="font-weight:800;font-size:15px;margin-bottom:10px;color:var(--improve);">⚠️ 이번 달 관리가 필요한 행사자</div>`;
+    c.decliners.forEach(x=>{
+      const parts = [`평균달성률 ${x.prevRate}% → ${x.curRate}% (${x.rateDiff}%p)`];
+      if(x.salesPct!==null) parts.push(`매출 ${x.salesPct}%`);
+      html += `<div style="padding:6px 0;font-size:13.5px;">${nameLink(x.name)} : ${parts.join(' · ')}</div>`;
+    });
+    html += '</div>';
+  }
+
+  return html;
+};
+
+
 Views._staffFilter = { q:'', store:'', group:'' };
 
 Views.staffList = function(){
@@ -1313,7 +1441,7 @@ Views.dataManage = function(){
   <div class="section-title">📊 실적 엑셀 Import (샘표 전남지역 유인행사)</div>
   <div class="grid cols-2">
     <div class="card">
-      <div style="font-weight:800;margin-bottom:8px;">엑셀 업로드 (.xlsx 전용)</div>
+          <div style="font-weight:800;margin-bottom:8px;">엑셀 업로드 (.xlsx 전용)</div>
       <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.7;">
         아래 12개 컬럼을 사용하는 고정 양식의 엑셀(.xlsx)을 업로드하세요.<br>
         <b>행사자이름 / 목표 / 총판매금액 / 달성률 / YEAR / MONTH / 품목군1~3 / 판매수량1~3</b><br>
@@ -1377,7 +1505,7 @@ Actions.copyText = function(elId){
 };
 
 /* ===== 행사자 등록/수정 ===== */
-   Actions.openStaffForm = function(staffId){
+Actions.openStaffForm = function(staffId){
   const s = staffId ? App.db.staff.find(x=>x.id===staffId) : null;
   UI.openModal(`
     <h2>${s? '행사자 정보 수정':'행사자 추가'}</h2>
