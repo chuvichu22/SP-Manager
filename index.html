@@ -678,3 +678,1858 @@ window.addEventListener('hashchange', ()=>{
   UI.render();
 });
 // ==== 1번 코드는 여기까지입니다. 1번 코드 아래에 엔터를 치고 2번 코드를 붙여넣으세요. ====
+   // ==== 여기서부터 2번 코드입니다. 위 코드 바로 아래에 빈 줄 없이 이어서 붙여넣으세요. ====
+/* ------------------------- 5. UI 컨트롤러 ------------------------- */
+const UI = {};
+
+UI.init = function(){
+  document.getElementById('view').innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;color:var(--text-secondary);">
+      <div style="font-size:40px;margin-bottom:16px;">☁️</div>
+      <div style="font-size:15px;font-weight:700;">클라우드 데이터를 불러오는 중입니다...</div>
+    </div>`;
+
+  try{
+    App.loadState();
+    const theme = localStorage.getItem(App.THEME_KEY) || 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    UI.syncThemeSwitch();
+    
+    document.querySelectorAll('.nav-item').forEach(el=>{
+      el.addEventListener('click', ()=>{ App.navigate(el.dataset.route); UI.closeSidebar(); });
+    });
+
+    App.load(() => {
+      UI.renderYmSelector();
+      const parts = location.hash.replace('#/','').split('/').filter(Boolean);
+      App.route = { name: parts[0]||'dashboard', staffId: parts[1]||null, tab: parts[2]||'goal' };
+      UI.render();
+    });
+  }catch(e){
+    console.error('앱 초기화 중 오류가 발생했습니다:', e);
+    const view = document.getElementById('view');
+    if(view){
+      view.innerHTML = `<div class="card" style="border:1px solid var(--improve);">
+        <div style="font-weight:800;color:var(--improve);margin-bottom:8px;">초기화 중 오류가 발생했습니다</div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">${App.util.esc(e.message||String(e))}</div>
+        <button class="btn danger" onclick="localStorage.clear(); location.reload();">저장된 데이터 초기화 후 새로고침</button>
+      </div>`;
+    }
+  }
+};
+
+UI.renderYmSelector = function(){
+  const el = document.getElementById('ymSelector');
+  if(!el) return;
+  if(App._allYMs.length===0){
+    el.innerHTML = `<span style="font-size:12.5px;color:var(--text-secondary);">업로드된 실적 데이터 없음</span>`;
+    return;
+  }
+  if(!App.state.selectedYM || !App._allYMs.includes(App.state.selectedYM)){
+    App.state.selectedYM = App._allYMs[App._allYMs.length-1]; 
+    App.saveState();
+  }
+  const options = [...App._allYMs].reverse().map(ym=>
+    `<option value="${ym}" ${ym===App.state.selectedYM?'selected':''}>${ym}</option>`
+  ).join('');
+  el.innerHTML = `<select id="ymSelectInput" style="font-weight:700;">${options}</select>`;
+  document.getElementById('ymSelectInput').onchange = function(){
+    App.state.selectedYM = this.value;
+    App.saveState();
+    UI.render();
+  };
+};
+
+UI.toggleTheme = function(){
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur==='dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem(App.THEME_KEY, next);
+  UI.syncThemeSwitch();
+};
+UI.syncThemeSwitch = function(){
+  const isDark = document.documentElement.getAttribute('data-theme')==='dark';
+  document.getElementById('themeSwitch').classList.toggle('on', isDark);
+  document.getElementById('themeLabel').textContent = isDark? '라이트 모드':'다크 모드';
+};
+UI.openSidebar = function(){ document.getElementById('sidebar').classList.add('open'); document.getElementById('sidebarBackdrop').classList.add('show'); };
+UI.closeSidebar = function(){ document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarBackdrop').classList.remove('show'); };
+
+UI.setActiveNav = function(name){
+  document.querySelectorAll('.nav-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.route===name);
+  });
+};
+
+UI.setTitle = function(title, sub){
+  document.getElementById('pageTitle').textContent = title;
+  document.getElementById('pageSub').textContent = sub||'';
+};
+
+UI.setTopActions = function(html){
+  document.getElementById('topbarActions').innerHTML = html || '';
+};
+
+UI.render = function(){
+  const r = App.route;
+  UI.setActiveNav(r.name==='staffDetail' ? 'staff' : r.name);
+  UI.setTopActions('');
+  UI.renderYmSelector();
+  if(r.name==='dashboard') Views.dashboard();
+  else if(r.name==='staff' && !r.staffId) Views.staffList();
+  else if((r.name==='staff'||r.name==='staffDetail') && r.staffId) Views.staffDetail(r.staffId, r.tab);
+  else if(r.name==='reports') Views.activityReports();
+  else if(r.name==='data') Views.dataManage();
+  else Views.dashboard();
+};
+
+/* ------------------------- 6. 모달 헬퍼 ------------------------- */
+UI.openModal = function(innerHtml){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `<div class="modal-overlay" id="modalOverlay"><div class="modal">${innerHtml}</div></div>`;
+  document.getElementById('modalOverlay').addEventListener('click', (e)=>{
+    if(e.target.id==='modalOverlay') UI.closeModal();
+  });
+};
+UI.closeModal = function(){ document.getElementById('modalRoot').innerHTML=''; };
+
+/* ------------------------- 7. 간단 차트 렌더러 ------------------------- */
+App.chart = {};
+App.chart.bar = function(labels, values, opts){
+  opts = opts||{};
+  const max = Math.max(1, ...values, opts.max||0);
+  let html = '<div class="bar-chart">';
+  labels.forEach((lbl,i)=>{
+    const v = values[i]||0;
+    const h = Math.max(3, Math.round((v/max)*120));
+    html += `<div class="bar-col">
+        <div class="bar" style="height:${h}px;background:${opts.color||'var(--accent)'}"><span class="val">${v}${opts.suffix||''}</span></div>
+        <div class="lbl">${App.util.esc(lbl)}</div>
+      </div>`;
+  });
+  html += '</div>';
+  return html;
+};
+
+/* ------------------------- 8. VIEWS: 화면별 렌더러 ------------------------- */
+const Views = {};
+
+/* === 8-1. 대시보드 === */
+Views._dashSearch = '';
+Views._dashOpenGroups = { '우수':true, '성장':false, '개선':false };
+
+Views.dashboard = function(){
+  const ym = App.state.selectedYM;
+  UI.setTitle('대시보드', ym? `${ym}까지 누적 실적 현황입니다` : '엑셀을 업로드하면 실적 현황이 표시됩니다');
+
+  let html = `<div class="card">
+    <div class="toolbar">
+      <div class="field" style="margin-bottom:0;flex:1;min-width:220px;">
+        <label class="field-label">엑셀 업로드 (.xlsx)</label>
+        <input type="file" accept=".xlsx,.xls" onchange="Actions.importRecordsExcel(this.files[0]); this.value='';">
+      </div>
+      <div class="field" style="margin-bottom:0;flex:1;min-width:220px;">
+        <label class="field-label">행사자 검색</label>
+        <input type="text" placeholder="이름으로 검색 (예: 김)" value="${App.util.esc(Views._dashSearch)}" oninput="Views._dashSearch=this.value;UI.render()">
+      </div>
+    </div>
+  </div>`;
+
+  if(Views._dashSearch.trim()){
+    const q = Views._dashSearch.trim();
+    // [수정] 검색 결과에서 '활동중단' 숨김
+    const matches = App.db.staff.filter(s=>s.name.includes(q) && s.status !== '활동중단');
+    html += `<div class="section-title">검색 결과 <span class="cnt">${matches.length}</span></div>`;
+    if(matches.length===0){
+      html += `<div class="card empty-state"><div class="emoji">🔍</div>'${App.util.esc(q)}'와(과) 일치하는 활동중 행사자가 없습니다.</div>`;
+    }else{
+      html += '<div class="card" style="padding:8px 12px;">';
+      matches.forEach(s=>{
+        const a = App.getStaffCumulativeAgg(s.name, ym);
+        const gm = App.groupMeta(a.group);
+        html += `<div class="item-row" style="background:transparent;cursor:pointer;" onclick="App.navigate('staffDetail','${s.id}')">
+          <div class="staff-avatar">${App.util.esc(s.name[0]||'?')}</div>
+          <div class="content"><div class="title">${App.util.esc(s.name)}</div><div class="meta">누적 평균달성률 ${a.avgRate}% · 누적 행사일수 ${a.days}일</div></div>
+          <span class="badge ${gm.cls}">${gm.label}</span>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    document.getElementById('view').innerHTML = html;
+    return;
+  }
+
+  if(!ym){
+    html += `<div class="card empty-state">
+      <div class="emoji">📤</div>업로드된 실적 데이터가 없습니다. 위에서 엑셀(.xlsx)을 업로드해주세요.
+    </div>`;
+    document.getElementById('view').innerHTML = html;
+    return;
+  }
+
+  const { byStaff, overall } = App.getCumulativeAgg(ym); 
+  const total = overall.totalStaff;
+
+  html += `<div class="grid cols-4" style="margin-top:16px;">
+    <div class="card stat-card"><div class="icon">👥</div><div class="label">전체 행사자 (~${ym})</div><div class="value">${total}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="icon">🏆</div><div class="label">우수 그룹</div><div class="value" style="color:var(--good)">${overall.good}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="icon">🌱</div><div class="label">성장 그룹</div><div class="value" style="color:var(--growth)">${overall.growth}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="icon">⚠️</div><div class="label">개선 그룹</div><div class="value" style="color:var(--improve)">${overall.improve}<small> 명</small></div></div>
+  </div>`;
+  if(overall.excluded){
+    html += `<div style="font-size:12.5px;color:var(--text-secondary);margin-top:8px;">제외 ${overall.excluded}명 (누적 행사일수 10일 미만)</div>`;
+  }
+
+  // [수정] 대시보드 리스트에서 활동중단자 숨김 적용
+  const activeStaffSet = new Set(App.db.staff.filter(s=>s.status!=='활동중단').map(s=>s.name));
+
+  ['우수','성장','개선'].forEach(g=>{
+    const names = Object.keys(byStaff).filter(n=>byStaff[n].group===g && activeStaffSet.has(n)).sort((a,b)=>byStaff[b].avgRate-byStaff[a].avgRate);
+    const gm = App.groupMeta(g);
+    const open = Views._dashOpenGroups[g];
+    html += `<div class="section-title" style="cursor:pointer;user-select:none;" onclick="Views._dashOpenGroups['${g}']=!Views._dashOpenGroups['${g}'];UI.render()">
+      <span class="badge ${gm.cls}">${gm.label}</span> <span class="cnt">${names.length}명</span>
+      <span style="margin-left:auto;color:var(--text-secondary);font-size:12px;">${open?'▲ 접기':'▼ 펼치기'}</span>
+    </div>`;
+    if(open){
+      if(names.length===0){
+        html += `<div class="card empty-state"><div class="emoji">🙋</div>${gm.label}에 해당하는 활동중 행사자가 없습니다.</div>`;
+      }else{
+        html += '<div class="card" style="padding:8px 12px;">';
+        names.forEach(name=>{
+          const s = App.db.staff.find(x=>x.name===name);
+          const a = byStaff[name];
+          html += `<div class="item-row" style="background:transparent;cursor:pointer;" onclick="App.navigate('staffDetail','${s?s.id:''}')">
+            <div class="staff-avatar">${App.util.esc(name[0]||'?')}</div>
+            <div class="content"><div class="title">${App.util.esc(name)}</div><div class="meta">누적 평균달성률 ${a.avgRate}% · 누적 행사일수 ${a.days}일</div></div>
+          </div>`;
+        });
+        html += '</div>';
+      }
+    }
+  });
+
+  document.getElementById('view').innerHTML = html;
+};
+
+/* === 8-2. 행사자 목록 === */
+Views._staffFilter = { q:'', store:'', group:'' };
+
+Views.staffList = function(){
+  const ym = App.state.selectedYM;
+  UI.setTitle('행사자 관리', ym? `${ym}까지 누적 실적 집계입니다` : '엑셀 업로드 후 실적이 표시됩니다');
+  UI.setTopActions(`<button class="btn primary" onclick="Actions.openStaffForm()">+ 행사자 추가</button>`);
+
+  const f = Views._staffFilter;
+  const { byStaff } = App.getCumulativeAgg(ym); 
+
+  let list = App.db.staff.filter(s=>{
+    if(f.q && !s.name.includes(f.q)) return false; 
+    // [수정] 활동중단 필터링. '활동중단'을 고르지 않은 이상 기본으로 다 숨김 처리
+    if(f.group === '활동중단') return s.status === '활동중단';
+    if(s.status === '활동중단') return false;
+
+    if(f.group){
+      const g = (byStaff[s.name]||{}).group || '제외';
+      if(g!==f.group) return false;
+    }
+    return true;
+  });
+
+  // [수정] 셀렉트 박스에 '활동중단 행사자' 보기 추가
+  let html = `<div class="card">
+    <div class="toolbar">
+      <input class="grow" type="text" placeholder="행사자명 부분검색 (예: 김)" value="${App.util.esc(f.q)}" oninput="Views._staffFilter.q=this.value;Views.staffList()">
+      <select onchange="Views._staffFilter.group=this.value;Views.staffList()">
+        <option value="">전체 그룹 (활동중)</option>
+        <option value="우수" ${f.group==='우수'?'selected':''}>우수그룹</option>
+        <option value="성장" ${f.group==='성장'?'selected':''}>성장그룹</option>
+        <option value="개선" ${f.group==='개선'?'selected':''}>개선그룹</option>
+        <option value="제외" ${f.group==='제외'?'selected':''}>집계제외(누적 10일미만)</option>
+        <option value="활동중단" ${f.group==='활동중단'?'selected':''}>🚫 활동중단 행사자</option>
+      </select>
+    </div>`;
+
+  if(!ym){
+    html += `<div class="empty-state"><div class="emoji">📤</div>업로드된 실적 데이터가 없습니다. '자료 관리'에서 엑셀을 업로드해주세요.</div>`;
+  }else if(list.length===0){
+    html += `<div class="empty-state"><div class="emoji">🔍</div>조건에 맞는 행사자가 없습니다.</div>`;
+  }else{
+    html += `<div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>이름</th><th>상태</th><th>누적 행사일수</th><th>평균달성률</th><th>16만원미만</th><th>목표미달</th><th>그룹</th><th></th>
+    </tr></thead><tbody>`;
+    list.forEach(s=>{
+      const a = byStaff[s.name] || {days:0,avgRate:0,under16Count:0,under16Pct:0,missCount:0,missPct:0,group:'제외'};
+      const gm = App.groupMeta(a.group);
+      html += `<tr class="row" onclick="App.navigate('staffDetail','${s.id}')">
+        <td><span class="staff-avatar">${App.util.esc(s.name[0]||'?')}</span>${App.util.esc(s.name)}</td>
+        <td>${s.status==='활동중단'?'<span class="badge neutral" style="color:var(--improve)">활동중단</span>':'<span class="badge neutral">활동중</span>'}</td>
+        <td>${a.days}일</td>
+        <td>${a.avgRate}%</td>
+        <td>${a.under16Count}회 (${a.under16Pct}%)</td>
+        <td>${a.missCount}회 (${a.missPct}%)</td>
+        <td><span class="badge ${gm.cls}">${gm.label}</span></td>
+        <td onclick="event.stopPropagation()">
+          <button class="icon-btn" title="수정" onclick="Actions.openStaffForm('${s.id}')">✏️</button>
+          <button class="icon-btn" title="삭제" onclick="Actions.deleteStaff('${s.id}')">🗑️</button>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  document.getElementById('view').innerHTML = html;
+};
+
+/* === 8-3. 행사자 상세 페이지 (탭 구조) === */
+Views.staffDetail = function(staffId, tab){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  if(!s){ Views.staffList(); return; }
+  s.goals = s.goals||[]; s.customers = s.customers||[]; s.memos = s.memos||[];
+  s.visitLogs = s.visitLogs||[];
+
+  const ym = App.state.selectedYM;
+  const agg = App.getStaffCumulativeAgg(s.name, ym);
+  const gm = App.groupMeta(agg.group);
+  UI.setTitle(s.name, `${s.store||'-'} · ${s.type||'-'} · 입사일 ${s.hireDate||'-'} ${s.status==='활동중단'?'(🚫활동중단)':''}`);
+  UI.setTopActions(`<span class="badge ${gm.cls}" style="margin-right:8px;">${ym?`~${ym} 누적 `:''}${gm.label}</span>
+    <button class="btn sm" onclick="App.navigate('staff')">← 목록</button>
+    <button class="btn sm" onclick="Actions.openStaffForm('${s.id}')">✏️ 정보수정</button>`);
+
+  const tabs = [
+    ['cumulative','누적 현황'], ['monthly','월별 성과'], ['activityreport','📋 활동일보'], ['visitlog','활동 이력'], ['activitystats','활동 통계'],
+    ['goal','개인 목표'], ['customer','충성고객'], ['memo','관리자 메모'],
+    ['report','성장 리포트'], ['ai','AI 코칭']
+  ];
+  let html = `<div class="tabs">`;
+  tabs.forEach(([key,label])=>{
+    html += `<div class="tab-btn ${tab===key?'active':''}" onclick="App.navigate('staffDetail','${s.id}','${key}')">${label}</div>`;
+  });
+  html += `</div><div id="tabBody"></div>`;
+  document.getElementById('view').innerHTML = html;
+
+  const body = document.getElementById('tabBody');
+  if(tab==='goal') body.innerHTML = Views._tabGoal(s);
+  else if(tab==='cumulative') body.innerHTML = Views._tabCumulative(s);
+  else if(tab==='monthly') body.innerHTML = Views._tabMonthly(s);
+  else if(tab==='activityreport') body.innerHTML = Views._tabActivityReport(s);
+  else if(tab==='visitlog') body.innerHTML = Views._tabVisitLog(s);
+  else if(tab==='activitystats') body.innerHTML = Views._tabActivityStats(s);
+  else if(tab==='customer') body.innerHTML = Views._tabCustomer(s);
+  else if(tab==='memo') body.innerHTML = Views._tabMemo(s);
+  else if(tab==='report') body.innerHTML = Views._tabReport(s);
+  else if(tab==='ai') body.innerHTML = Views._tabAI(s);
+  else body.innerHTML = Views._tabCumulative(s);
+};
+
+/* -- 누적 현황 탭 -- */
+Views._tabCumulative = function(s){
+  const ym = App.state.selectedYM;
+  const a = App.getStaffCumulativeAgg(s.name, ym);
+  const gm = App.groupMeta(a.group);
+  if(a.days===0){
+    return `<div class="card empty-state"><div class="emoji">📊</div>이 행사자의 실적 데이터가 없습니다.</div>`;
+  }
+
+  // [수정] 품목 우수/부족 분석 데이터 생성
+  const sortedItems = Object.entries(a.items || {}).sort((x, y) => y[1] - x[1]);
+  let bestItem = '-', worstItem = '-';
+  if(sortedItems.length > 0) {
+      bestItem = `${sortedItems[0][0]} (${sortedItems[0][1].toLocaleString()}개)`;
+      if(sortedItems.length > 1) {
+          worstItem = `${sortedItems[sortedItems.length-1][0]} (${sortedItems[sortedItems.length-1][1].toLocaleString()}개)`;
+      } else {
+          worstItem = '비교 품목 없음';
+      }
+  }
+
+  return `<div class="card">
+    <div style="font-weight:800;margin-bottom:14px;">누적 현황 (~${ym||'-'})</div>
+    <div class="grid cols-4">
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">현재 등급</div><div style="margin-top:6px;"><span class="badge ${gm.cls}">${gm.label}</span></div>
+      </div>
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">누적 행사일수</div><div class="value" style="font-size:22px;">${a.days}<small>일</small></div>
+      </div>
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">누적 평균달성률</div><div class="value" style="font-size:22px;">${a.avgRate}<small>%</small></div>
+      </div>
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;">
+        <div class="label">16만원 미만</div><div class="value" style="font-size:22px;">${a.under16Count}<small>회 (${a.under16Pct}%)</small></div>
+      </div>
+    </div>
+    <div class="grid cols-4" style="margin-top:12px;">
+      <div class="stat-card" style="background:var(--bg-soft);border-radius:var(--radius-sm);padding:14px;grid-column:span 2;">
+        <div class="label">목표미달</div><div class="value" style="font-size:22px;">${a.missCount}<small>회 (${a.missPct}%)</small></div>
+      </div>
+    </div>
+
+    <div style="font-weight:800;margin:24px 0 10px;">판매 품목 분석 (누적 수량 기준)</div>
+    <div class="grid cols-2">
+      <div class="stat-card" style="background:var(--good-soft);border-radius:var(--radius-sm);padding:14px;border:1px solid var(--good);">
+        <div class="label" style="color:var(--good);">🔥 판매 우수 품목군</div><div class="value" style="font-size:18px;color:var(--text);">${App.util.esc(bestItem)}</div>
+      </div>
+      <div class="stat-card" style="background:var(--improve-soft);border-radius:var(--radius-sm);padding:14px;border:1px solid var(--improve);">
+        <div class="label" style="color:var(--improve);">🧊 판매 부족 품목군</div><div class="value" style="font-size:18px;color:var(--text);">${App.util.esc(worstItem)}</div>
+      </div>
+    </div>
+  </div>`;
+};
+
+/* -- 목표 탭 -- */
+Views._tabGoal = function(s){
+  const goals = s.goals||[];
+  const rate = goals.length? Math.round(goals.filter(g=>g.done).length/goals.length*100):0;
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">개인 목표 (달성률 ${rate}%)</div>
+      <button class="btn sm primary" onclick="Actions.openGoalForm('${s.id}')">+ 목표 추가</button>
+    </div>
+    <div class="progress-bar" style="margin-bottom:14px;"><div style="width:${rate}%;background:var(--good)"></div></div>`;
+  if(goals.length===0){
+    html += `<div class="empty-state"><div class="emoji">🎯</div>등록된 목표가 없습니다.</div>`;
+  }else{
+    goals.slice().reverse().forEach(gl=>{
+      html += `<div class="item-row">
+        <div class="check ${gl.done?'done':''}" onclick="Actions.toggleGoal('${s.id}','${gl.id}')">${gl.done?'✓':''}</div>
+        <div class="content"><div class="title ${gl.done?'strike':''}">${App.util.esc(gl.title)}</div><div class="meta">등록일 ${gl.createdAt}</div></div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteGoal('${s.id}','${gl.id}')">🗑️</button></div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 관리자 활동이력 탭 -- */
+App.visitChecklist = [
+  {key:'pop', label:'POP 부착 확인'},
+  {key:'price', label:'가격고지 확인'},
+  {key:'directDisplay', label:'직접연관진열 요청'},
+  {key:'loyalCustomer', label:'충성고객 확보 활동'},
+  {key:'serviceEdu', label:'고객응대 교육'},
+  {key:'note', label:'행사노트 작성'},
+  {key:'comment', label:'목표댓글 작성'},
+  {key:'salesEncourage', label:'매출 독려'},
+  {key:'tastingEdu', label:'시식 교육'},
+  {key:'promoCheck', label:'판촉물 점검'},
+  {key:'displayImprove', label:'진열 개선'},
+  {key:'storeConsult', label:'매장담당 상담'},
+  {key:'photoUpload', label:'행사사진 업로드 확인'},
+  {key:'mobileAttendance', label:'모바일 근태 확인'},
+  {key:'beapleReg', label:'비플 등록 확인'},
+  {key:'etcEdu', label:'기타 교육'}
+];
+
+Views._tabVisitLog = function(s){
+  const logs = s.visitLogs||[];
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">관리자 활동이력 (${logs.length}건)</div>
+      <button class="btn sm primary" onclick="Actions.openVisitLogForm('${s.id}')">+ 방문기록 추가</button>
+    </div>`;
+  if(logs.length===0){
+    html += `<div class="empty-state"><div class="emoji">🗒️</div>기록된 방문/활동 이력이 없습니다.</div>`;
+  }else{
+    logs.slice().reverse().forEach(l=>{
+      const checkedLabels = App.visitChecklist.filter(it=>l.checklist && l.checklist[it.key]).map(it=>it.label);
+      html += `<div class="item-row">
+        <div class="content">
+          <div class="title">${l.date||'-'} ${l.store? '· '+App.util.esc(l.store):''}</div>
+          ${checkedLabels.length? `<div class="meta" style="margin-top:4px;">${checkedLabels.map(lb=>`<span class="badge neutral" style="margin:2px 4px 2px 0;">${App.util.esc(lb)}</span>`).join('')}</div>`:''}
+          ${l.memo? `<div class="meta" style="margin-top:4px;">${App.util.esc(l.memo)}</div>`:''}
+        </div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteVisitLog('${s.id}','${l.id}')">🗑️</button></div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 관리자 활동 통계 탭 -- */
+Views._tabActivityStats = function(s){
+  const logs = s.visitLogs||[];
+  const statKeys = [
+    {key:'pop', label:'POP 확인'},
+    {key:'price', label:'가격고지'},
+    {key:'directDisplay', label:'직접연관진열'},
+    {key:'loyalCustomer', label:'충성고객 확보'},
+    {key:'serviceEdu', label:'고객응대 교육'},
+    {key:'salesEncourage', label:'매출 독려'},
+    {key:'note', label:'행사노트 작성'}
+  ];
+  const counts = statKeys.map(it=>({ label:it.label, count: logs.filter(l=>l.checklist && l.checklist[it.key]).length }));
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:4px;">활동 통계 (누적 방문 ${logs.length}건 기준)</div>`;
+  if(logs.length===0){
+    html += `<div class="empty-state"><div class="emoji">📊</div>활동이력이 없습니다. '활동 이력' 탭에서 방문기록을 추가해주세요.</div>`;
+  }else{
+    html += App.chart.bar(counts.map(c=>c.label), counts.map(c=>c.count), {suffix:'회'});
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 충성고객 탭 -- */
+Views._tabCustomer = function(s){
+  const list = s.customers||[];
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">충성고객 (${list.length}명)</div>
+      <button class="btn sm primary" onclick="Actions.openCustomerForm('${s.id}')">+ 고객 추가</button>
+    </div>`;
+  if(list.length===0){
+    html += `<div class="empty-state"><div class="emoji">💛</div>등록된 충성고객이 없습니다.</div>`;
+  }else{
+    list.slice().reverse().forEach(c=>{
+      html += `<div class="item-row">
+        <div class="check ${c.revisited?'done':''}" title="재방문 체크" onclick="Actions.toggleRevisit('${s.id}','${c.id}')">${c.revisited?'✓':''}</div>
+        <div class="content"><div class="title">${App.util.esc(c.name)} <span style="color:var(--text-secondary);font-weight:600;">· ${App.util.esc(c.interest||'-')}</span></div>
+          <div class="meta">${App.util.esc(c.store||'-')} · 확보일 ${c.acquiredDate||'-'} · 다음방문예정 ${c.nextVisit||'-'}</div>
+          ${c.memo? `<div class="meta">${App.util.esc(c.memo)}</div>`:''}</div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteCustomer('${s.id}','${c.id}')">🗑️</button></div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 월별 성과 탭 -- */
+Views._tabMonthly = function(s){
+  const yms = App._allYMs; 
+  const monthlyRows = yms.map(ym=>({ ym, a: App.getStaffAgg(s.name, ym) })).filter(x=>x.a.days>0);
+
+  if(monthlyRows.length===0){
+    return `<div class="card empty-state"><div class="emoji">📊</div>이 행사자의 실적 데이터가 없습니다. 엑셀을 업로드해주세요.</div>`;
+  }
+
+  const cumRowsWithData = yms.map(ym=>({ ym, a: App.getStaffCumulativeAgg(s.name, ym) })).filter(x=>x.a.days>0);
+
+  // [수정] 차트에 월 글자(예: "08월")를 출력할 때 split('-')[1]을 사용하여 깨지지 않게 방지
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:2px;">누적 평균달성률 추이</div>
+    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">각 월까지 누적된 평균달성률입니다. 등급이 시간에 따라 어떻게 변해왔는지 확인할 수 있습니다.</div>
+    ${App.chart.bar(cumRowsWithData.map(r=>r.ym.split('-')[1]+'월'), cumRowsWithData.map(r=>r.a.avgRate), {suffix:'%'})}
+  </div>
+  <div class="card" style="margin-top:16px;">
+    <div style="font-weight:800;margin-bottom:10px;">월별 성과 상세</div>
+    <div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>월</th><th>등급(누적기준)</th><th>행사일수</th><th>평균달성률</th><th>16만원미만</th><th>목표미달</th>
+    </tr></thead><tbody>`;
+  monthlyRows.slice().reverse().forEach(r=>{
+    const cumGm = App.groupMeta(App.getStaffCumulativeAgg(s.name, r.ym).group);
+    html += `<tr><td>${App.util.monthLabel(r.ym)}</td><td><span class="badge ${cumGm.cls}">${cumGm.label}</span></td>
+      <td>${r.a.days}일</td><td>${r.a.avgRate}%</td>
+      <td>${r.a.under16Count}회 (${r.a.under16Pct}%)</td><td>${r.a.missCount}회 (${r.a.missPct}%)</td></tr>`;
+  });
+  html += '</tbody></table></div></div>';
+  return html;
+};
+
+/* -- 관리자 메모 탭 -- */
+Views._tabMemo = function(s){
+  const memos = s.memos||[];
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-weight:800;">관리자 메모 (비공개)</div>
+      <button class="btn sm primary" onclick="Actions.openMemoForm('${s.id}')">+ 메모 작성</button>
+    </div>`;
+  if(memos.length===0){
+    html += `<div class="empty-state"><div class="emoji">🔒</div>작성된 메모가 없습니다.</div>`;
+  }else{
+    memos.slice().reverse().forEach(m=>{
+      html += `<div class="item-row"><div class="content"><div class="title">${App.util.esc(m.text)}</div><div class="meta">${m.date}</div></div>
+        <div class="actions"><button class="icon-btn" onclick="Actions.deleteMemo('${s.id}','${m.id}')">🗑️</button></div></div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 성장 리포트 탭 -- */
+Views._tabReport = function(s){
+  let html = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-weight:800;">성장 리포트 자동 출력</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn sm" onclick="Actions.copyText('reportText')">📋 복사</button>
+        <button class="btn sm primary" onclick="document.getElementById('reportText').textContent=Actions.buildGrowthReport('${s.id}')">🔄 새로 생성</button>
+      </div>
+    </div>
+    <div class="report-box" id="reportText">${App.util.esc(Actions.buildGrowthReport(s.id))}</div>
+  </div>`;
+  return html;
+};
+
+/* -- AI 코칭 탭 -- */
+Views._tabAI = function(s){
+  const c = Actions.buildAICoaching(s.id);
+  return `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="font-weight:800;">AI 코칭 제안</div>
+      <button class="btn sm primary" onclick="UI.render()">🔄 다시 분석</button>
+    </div>
+    <div class="coach-block"><h4>💪 강점</h4><p>${App.util.esc(c.strength)}</p></div>
+    <div class="coach-block"><h4>🔧 부족한 점</h4><p>${App.util.esc(c.weakness)}</p></div>
+    <div class="coach-block"><h4>🎯 다음달 추천 목표</h4><p>${App.util.esc(c.nextGoal)}</p></div>
+    <div class="coach-block"><h4>📚 교육 추천</h4><p>${App.util.esc(c.education)}</p></div>
+    <div class="coach-block"><h4>📌 관리 포인트</h4><p>${App.util.esc(c.managePoint)}</p></div>
+  </div>`;
+};
+
+/* === 8-5. 자료 관리 (CSV 내보내기/불러오기, 백업) === */
+Views.dataManage = function(){
+  UI.setTitle('자료 관리', '데이터를 엑셀(CSV)로 내보내거나 불러올 수 있습니다');
+  const staffCount = App.db.staff.length;
+  let html = `<div class="grid cols-2">
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">엑셀(CSV) 내보내기</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6;">
+        행사자 기본정보/목표/성과 데이터를 CSV 파일로 내보냅니다. CSV는 Excel에서 바로 열 수 있는 표준 형식입니다.
+      </div>
+      <button class="btn primary" style="width:100%;margin-bottom:8px;" onclick="Actions.exportStaffCSV()">👥 행사자 목록 내보내기 (CSV)</button>
+      <button class="btn" style="width:100%;margin-bottom:8px;" onclick="Actions.exportPerformanceCSV()">📈 월별 성과 내보내기 (CSV)</button>
+      <button class="btn" style="width:100%;" onclick="Actions.exportFullBackup()">🗂️ 전체 데이터 백업 (.json)</button>
+    </div>
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">엑셀(CSV) / 백업 불러오기</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6;">
+        내보낸 CSV, 실제 엑셀(.xlsx/.xls) 파일, 또는 전체 백업(.json) 파일을 다시 불러올 수 있습니다. 이름이 같은 행사자는 갱신되고, 새 이름은 새로 추가됩니다.
+      </div>
+      <div class="field">
+        <label class="field-label">행사자 목록 불러오기 (.xlsx, .xls, .csv)</label>
+        <input type="file" accept=".xlsx,.xls,.csv" onchange="Actions.importStaffCSV(this.files[0])">
+      </div>
+      <div class="field">
+        <label class="field-label">전체 백업(.json) 복원</label>
+        <input type="file" accept=".json" onchange="Actions.importFullBackup(this.files[0])">
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">📊 실적 엑셀 Import (샘표 전남지역 유인행사)</div>
+  <div class="grid cols-2">
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">엑셀 업로드 (.xlsx 전용)</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.7;">
+        아래 컬럼을 사용하는 고정 양식의 엑셀(.xlsx)을 업로드하세요.<br>
+        <b>행사자이름 / 목표 / 총판매금액 / 달성률 / YEAR / MONTH / 품목군1~3 / 판매수량1~3</b><br>
+        표 위에 제목행이 있어도 헤더 행을 자동으로 찾습니다. 처음엔 전체 데이터를, 이후엔 매달 새 엑셀만 올리면 됩니다.
+        같은 <b>YEAR+MONTH</b> 데이터가 이미 있으면 그 달의 데이터를 새 내용으로 자동 갱신(업데이트)하고,
+        다른 달의 기존 데이터는 그대로 유지(누적)됩니다.
+      </div>
+      <div class="field">
+        <label class="field-label">엑셀 파일 선택 (.xlsx)</label>
+        <input type="file" accept=".xlsx,.xls" onchange="Actions.importRecordsExcel(this.files[0]); this.value='';">
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:8px;">현재 데이터 엑셀로 내보내기</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;line-height:1.6;">
+        누적된 실적 데이터를 업로드 양식과 동일한 컬럼 구조의 .xlsx로 다시 내보낼 수 있습니다.
+      </div>
+      <button class="btn primary" style="width:100%;" onclick="Actions.exportRecordsExcel()">📥 실적 엑셀(.xlsx)로 내보내기</button>
+      <div style="font-size:12.5px;color:var(--text-secondary);margin-top:10px;">현재 누적된 실적 레코드: <b>${App.db.records.length.toLocaleString()}건</b> / 업로드된 월: <b>${App._allYMs.length}개월</b></div>
+    </div>
+  </div>
+  <div class="section-title">현재 저장 현황 (클라우드 동기화 상태)</div>
+  <div class="grid cols-3">
+    <div class="card stat-card"><div class="label">등록된 행사자</div><div class="value">${staffCount}<small> 명</small></div></div>
+    <div class="card stat-card"><div class="label">누적 실적 레코드</div><div class="value">${App.db.records.length.toLocaleString()}<small> 건</small></div></div>
+    <div class="card stat-card"><div class="label">마지막 백업</div><div class="value" style="font-size:16px;">${App.db.meta.lastBackup || '없음'}</div></div>
+  </div>
+  <div class="section-title" style="color:var(--improve);">위험 구역</div>
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:10px;">모든 데이터 초기화</div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">저장된 모든 행사자/일보 데이터가 삭제됩니다. (클라우드 데이터 포함) 이 작업은 되돌릴 수 없습니다.</div>
+    <button class="btn danger" onclick="Actions.resetAllData()">🗑️ 전체 데이터 초기화</button>
+  </div>`;
+  document.getElementById('view').innerHTML = html;
+};
+
+/* ------------------------- 9. ACTIONS: CRUD 및 폼/모달 ------------------------- */
+const Actions = {};
+
+/* -- 확인창 공통 -- */
+Actions.confirm = function(message, onYes){
+  UI.openModal(`
+    <h2>확인</h2>
+    <p style="font-size:14px;line-height:1.6;margin-bottom:6px;">${App.util.esc(message)}</p>
+    <div class="modal-actions">
+      <button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn danger" id="confirmYesBtn">삭제</button>
+    </div>`);
+  document.getElementById('confirmYesBtn').onclick = ()=>{ onYes(); UI.closeModal(); };
+};
+
+Actions.copyText = function(elId){
+  const text = document.getElementById(elId).textContent;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>App.util.toast('복사되었습니다')).catch(()=>App.util.toast('복사에 실패했습니다'));
+  }else{
+    const ta = document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    App.util.toast('복사되었습니다');
+  }
+};
+
+/* ===== 행사자 등록/수정 ===== */
+Actions.openStaffForm = function(staffId){
+  const s = staffId ? App.db.staff.find(x=>x.id===staffId) : null;
+  // [수정] 행사자 상태 (활동중/활동중단) 셀렉트 박스 추가
+  UI.openModal(`
+    <h2>${s? '행사자 정보 수정':'행사자 추가'}</h2>
+    <div class="field"><label class="field-label">행사자명</label><input id="f_name" type="text" value="${s?App.util.esc(s.name):''}" placeholder="예: 김은주"></div>
+    <div class="field"><label class="field-label">담당매장</label><input id="f_store" type="text" value="${s?App.util.esc(s.store||''):''}" placeholder="예: 롯데마트 순천점"></div>
+    <div class="grid cols-2">
+      <div class="field"><label class="field-label">입사일</label><input id="f_hire" type="date" value="${s?s.hireDate||'':''}"></div>
+      <div class="field"><label class="field-label">활동 상태</label>
+        <select id="f_status">
+          <option value="활동중" ${!s || s.status!=='활동중단' ? 'selected':''}>활동중</option>
+          <option value="활동중단" ${s && s.status==='활동중단' ? 'selected':''}>활동중단</option>
+        </select>
+      </div>
+    </div>
+    <div class="field"><label class="field-label">담당구분</label>
+      <select id="f_type">
+        ${['정규','계약','홍보대행'].map(t=>`<option ${s&&s.type===t?'selected':''}>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveStaff('${s?s.id:''}')">저장</button>
+    </div>`);
+};
+
+Actions.saveStaff = function(staffId){
+  const name = document.getElementById('f_name').value.trim();
+  if(!name){ App.util.toast('행사자명을 입력해주세요'); return; }
+  const store = document.getElementById('f_store').value.trim();
+  const hireDate = document.getElementById('f_hire').value;
+  const type = document.getElementById('f_type').value;
+  const status = document.getElementById('f_status').value; // 상태 저장
+  
+  if(staffId){
+    const s = App.db.staff.find(x=>x.id===staffId);
+    Object.assign(s, {name, store, hireDate, type, status});
+  }else{
+    App.db.staff.push({
+      id: App.uid('staff'), name, store, hireDate, type, status,
+      createdAt: App.util.todayStr(),
+      goals:[], customers:[], memos:[], visitLogs:[]
+    });
+  }
+  App.save(); UI.closeModal(); App.util.toast('저장되었습니다'); UI.render();
+};
+
+Actions.deleteStaff = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  Actions.confirm(`'${s?s.name:''}' 행사자를 삭제하시겠습니까? 관련된 모든 기록이 함께 삭제됩니다.`, ()=>{
+    App.db.staff = App.db.staff.filter(x=>x.id!==staffId);
+    App.save(); App.util.toast('삭제되었습니다'); App.navigate('staff');
+  });
+};
+
+/* ===== 목표 ===== */
+Actions.openGoalForm = function(staffId){
+  UI.openModal(`
+    <h2>목표 추가</h2>
+    <div class="field"><label class="field-label">목표 내용</label>
+      <input id="f_goal" type="text" list="goalPresets" placeholder="예: 충성고객 월1명 확보">
+      <datalist id="goalPresets">
+        <option value="충성고객 월1명 확보"><option value="목표댓글 작성"><option value="행사노트 작성">
+        <option value="고객응대"><option value="직접연관진열"><option value="레시피 활용"><option value="매장담당 상담">
+      </datalist>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveGoal('${staffId}')">추가</button></div>`);
+};
+Actions.saveGoal = function(staffId){
+  const title = document.getElementById('f_goal').value.trim();
+  if(!title){ App.util.toast('목표 내용을 입력해주세요'); return; }
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.goals.push({id:App.uid('goal'), title, done:false, createdAt:App.util.todayStr()});
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'goal');
+};
+Actions.toggleGoal = function(staffId, goalId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const g = s.goals.find(x=>x.id===goalId); g.done = !g.done;
+  App.save(); UI.render();
+};
+Actions.deleteGoal = function(staffId, goalId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.goals = s.goals.filter(x=>x.id!==goalId); App.save(); UI.render();
+};
+
+/* ===== 관리자 활동이력 (방문일/매장명/체크리스트/메모) ===== */
+Actions.openVisitLogForm = function(staffId){
+  const checklistHtml = App.visitChecklist.map(it=>`
+    <label class="chk-item">
+      <input type="checkbox" data-key="${it.key}">
+      <span>${it.label}</span>
+    </label>`).join('');
+  UI.openModal(`
+    <h2>방문기록 추가</h2>
+    <div class="field"><label class="field-label">방문일</label><input id="f_vdate" type="date" value="${App.util.todayStr()}"></div>
+    <div class="field"><label class="field-label">매장명</label><input id="f_vstore" type="text" placeholder="예: 이마트 광산점"></div>
+    <div class="field"><label class="field-label">체크리스트</label>
+      <div class="checklist-grid" id="visitChecklistGrid">${checklistHtml}</div>
+    </div>
+    <div class="field"><label class="field-label">메모 (기타메모 포함)</label><textarea id="f_vmemo" placeholder="특이사항을 적어주세요"></textarea></div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveVisitLog('${staffId}')">추가</button></div>`);
+};
+Actions.saveVisitLog = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const date = document.getElementById('f_vdate').value || App.util.todayStr();
+  const store = document.getElementById('f_vstore').value.trim();
+  const memo = document.getElementById('f_vmemo').value.trim();
+  const checklist = {};
+  document.querySelectorAll('#visitChecklistGrid input[type=checkbox]').forEach(chk=>{
+    checklist[chk.dataset.key] = chk.checked;
+  });
+  if(!s.visitLogs) s.visitLogs = [];
+  s.visitLogs.push({ id: App.uid('visit'), date, store, checklist, memo, createdAt: App.util.todayStr() });
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'visitlog');
+};
+Actions.deleteVisitLog = function(staffId, logId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  Actions.confirm('이 방문기록을 삭제하시겠습니까?', ()=>{
+    s.visitLogs = (s.visitLogs||[]).filter(x=>x.id!==logId);
+    App.save(); UI.render();
+  });
+};
+
+/* ===== 충성고객 ===== */
+Actions.openCustomerForm = function(staffId){
+  UI.openModal(`
+    <h2>충성고객 추가</h2>
+    <div class="field"><label class="field-label">고객명</label><input id="f_cname" type="text" placeholder="예: 홍길동 고객님"></div>
+    <div class="field"><label class="field-label">관심상품</label><input id="f_cinterest" type="text" placeholder="예: 백년동안 흑초"></div>
+    <div class="field"><label class="field-label">구매매장</label><input id="f_cstore" type="text" placeholder="예: 하나로마트 광양점"></div>
+    <div class="grid cols-2">
+      <div class="field"><label class="field-label">확보일</label><input id="f_cacq" type="date" value="${App.util.todayStr()}"></div>
+      <div class="field"><label class="field-label">다음 방문 예정일</label><input id="f_cnext" type="date"></div>
+    </div>
+    <div class="field"><label class="field-label">메모</label><textarea id="f_cmemo" placeholder="선호/특이사항 등"></textarea></div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveCustomer('${staffId}')">추가</button></div>`);
+};
+Actions.saveCustomer = function(staffId){
+  const name = document.getElementById('f_cname').value.trim();
+  if(!name){ App.util.toast('고객명을 입력해주세요'); return; }
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.customers.push({
+    id:App.uid('cust'), name,
+    interest:document.getElementById('f_cinterest').value.trim(),
+    store:document.getElementById('f_cstore').value.trim(),
+    acquiredDate:document.getElementById('f_cacq').value,
+    nextVisit:document.getElementById('f_cnext').value,
+    memo:document.getElementById('f_cmemo').value.trim(),
+    revisited:false
+  });
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'customer');
+};
+Actions.toggleRevisit = function(staffId, custId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const c = s.customers.find(x=>x.id===custId); c.revisited = !c.revisited;
+  App.save(); UI.render();
+};
+Actions.deleteCustomer = function(staffId, custId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.customers = s.customers.filter(x=>x.id!==custId); App.save(); UI.render();
+};
+
+/* ===== 관리자 메모 ===== */
+Actions.openMemoForm = function(staffId){
+  UI.openModal(`
+    <h2>관리자 메모 작성</h2>
+    <div class="field"><textarea id="f_memo" placeholder="비공개로 관리되는 메모입니다"></textarea></div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button>
+      <button class="btn primary" onclick="Actions.saveMemo('${staffId}')">저장</button></div>`);
+};
+Actions.saveMemo = function(staffId){
+  const text = document.getElementById('f_memo').value.trim();
+  if(!text) return;
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.memos.push({id:App.uid('memo'), text, date:App.util.todayStr()});
+  App.save(); UI.closeModal(); App.navigate('staffDetail', staffId, 'memo');
+};
+Actions.deleteMemo = function(staffId, memoId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  s.memos = s.memos.filter(x=>x.id!==memoId); App.save(); UI.render();
+};
+
+/* ===== 성장 리포트 자동 생성 ===== */
+Actions.buildGrowthReport = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  if(!s) return '';
+  const months = App._allYMs.filter(ym=>App.getStaffAgg(s.name, ym).days>0);
+  const firstRate = months.length? App.getStaffAgg(s.name, months[0]).avgRate : null;
+  const lastRate = months.length? App.getStaffAgg(s.name, months[months.length-1]).avgRate : null;
+  const g = months.length? App.getStaffCumulativeAgg(s.name, months[months.length-1]).group : '제외';
+  const goals = s.goals||[]; const goalDone = goals.filter(x=>x.done).length;
+  const custCount = (s.customers||[]).length;
+  const logs = s.visitLogs||[];
+  const eduCount = logs.filter(l=>l.checklist && (l.checklist.serviceEdu || l.checklist.tastingEdu || l.checklist.etcEdu)).length;
+  const visitCount = logs.length;
+
+  let lines = [];
+  lines.push(`■ ${s.name} 성장 리포트 (${App.util.todayStr()} 기준)`);
+  lines.push('');
+  lines.push(`- 담당매장: ${s.store||'-'} / 담당구분: ${s.type||'-'} / 입사일: ${s.hireDate||'-'}`);
+  lines.push(`- 최근월 그룹: ${g}그룹`);
+  lines.push('');
+  lines.push('[교육내용]');
+  lines.push(eduCount? `누적 방문 중 ${eduCount}건에서 교육 관련 활동(고객응대/시식/기타 교육)이 진행되었습니다.` : '최근 별도로 기록된 교육 활동이 없습니다.');
+  lines.push('');
+  lines.push('[성과변화 / 달성률 변화]');
+  if(firstRate!==null && lastRate!==null){
+    const diff = lastRate-firstRate;
+    lines.push(`평균달성률이 ${firstRate}%에서 ${lastRate}%로 ${diff>=0? diff+'%p 상승':Math.abs(diff)+'%p 하락'}하였습니다.`);
+  }else{
+    lines.push('아직 업로드된 실적 데이터가 충분하지 않습니다.');
+  }
+  lines.push('');
+  lines.push('[그룹 변화]');
+  lines.push(`최근 실적을 기준으로 현재 ${g}그룹으로 분류되어 있습니다.`);
+  lines.push('');
+  lines.push('[목표 달성률]');
+  lines.push(goals.length? `전체 목표 ${goals.length}건 중 ${goalDone}건을 달성하여 달성률 ${Math.round(goalDone/goals.length*100)}%를 기록하였습니다.` : '등록된 목표가 없습니다.');
+  lines.push('');
+  lines.push('[충성고객 확보]');
+  lines.push(custCount? `누적 ${custCount}명의 충성고객을 확보하였습니다.` : '아직 확보된 충성고객이 없습니다.');
+  lines.push('');
+  lines.push('[활동이력]');
+  lines.push(visitCount? `누적 ${visitCount}건의 방문/활동이 기록되었습니다.` : '기록된 방문/활동이력이 없습니다.');
+  return lines.join('\n');
+};
+
+/* ===== AI 코칭 자동 분석 (규칙 기반) ===== */
+Actions.buildAICoaching = function(staffId){
+  const s = App.db.staff.find(x=>x.id===staffId);
+  const goals = s.goals||[]; const custs = s.customers||[];
+  const months = App._allYMs.filter(ym=>App.getStaffAgg(s.name, ym).days>0);
+  const lastRate = months.length? App.getStaffAgg(s.name, months[months.length-1]).avgRate : 0;
+  const prevRate = months.length>1? App.getStaffAgg(s.name, months[months.length-2]).avgRate : lastRate;
+  const goalRate = goals.length? goals.filter(g=>g.done).length/goals.length*100 : 0;
+  const commentGoal = goals.find(g=>g.title.includes('댓글'));
+  const noteGoal = goals.find(g=>g.title.includes('노트'));
+  const g = months.length? App.getStaffCumulativeAgg(s.name, months[months.length-1]).group : '제외';
+
+  let strengthParts = [];
+  if(custs.length>=2) strengthParts.push('충성고객 확보 활동이 우수합니다');
+  if(lastRate>=prevRate && months.length>1) strengthParts.push('최근 평균달성률이 지속적으로 상승하고 있습니다');
+  if(goalRate>=70) strengthParts.push('등록된 목표의 이행률이 높은 편입니다');
+  if(strengthParts.length===0) strengthParts.push('현재까지의 데이터로는 두드러진 강점을 특정하기 어려우니, 활동기록을 조금 더 축적해보시길 권장합니다');
+
+  let weaknessParts = [];
+  if(commentGoal && !commentGoal.done) weaknessParts.push('목표댓글 작성률이 낮은 편입니다');
+  if(noteGoal && !noteGoal.done) weaknessParts.push('행사노트 작성이 다소 미흡합니다');
+  if(custs.length===0) weaknessParts.push('충성고객 확보 실적이 아직 없습니다');
+  if(lastRate<prevRate && months.length>1) weaknessParts.push('최근 평균달성률이 하락 추세를 보이고 있습니다');
+  if(weaknessParts.length===0) weaknessParts.push('특별히 우려되는 부분은 확인되지 않습니다');
+
+  let nextGoal = g==='개선' ? '기본기 강화를 위한 행사노트 작성률 향상을 다음달 목표로 추천합니다.'
+    : g==='성장' ? '목표댓글 작성 및 충성고객 추가 확보를 다음달 목표로 추천합니다.'
+    : '현재의 우수한 흐름을 유지하며 신규 상품 연관진열 확대를 목표로 추천합니다.';
+
+  let education = g==='개선' ? '고객응대 기본 교육 및 할인계산기 활용 교육을 우선 추천합니다.'
+    : g==='성장' ? '레시피 활용 및 연관진열 심화 교육을 추천합니다.'
+    : '신규 행사자 멘토링 역할을 부여할 수 있는 교육을 추천합니다.';
+
+  let managePoint = g==='개선' ? '주 단위로 방문하여 현장 밀착 관리와 독려가 필요합니다.'
+    : g==='성장' ? '월 2회 정기 방문으로 성장 추세를 지속 관리해 주세요.'
+    : '우수 사례를 타 매장에 공유할 수 있도록 관리해 주세요.';
+
+  return {
+    strength: strengthParts.join('. ') + '.',
+    weakness: weaknessParts.join('. ') + '.',
+    nextGoal, education, managePoint
+  };
+};
+
+/* ===== 자료 관리: CSV 내보내기/불러오기 ===== */
+App.csv = {
+  escapeCell(v){
+    v = (v===undefined||v===null)? '' : String(v);
+    if(/[",\n]/.test(v)) return '"' + v.replace(/"/g,'""') + '"';
+    return v;
+  },
+  toCSV(rows){
+    return rows.map(r=>r.map(App.csv.escapeCell).join(',')).join('\r\n');
+  },
+  parseCSV(text){
+    const rows=[]; let row=[]; let cell=''; let inQuotes=false;
+    for(let i=0;i<text.length;i++){
+      const c = text[i];
+      if(inQuotes){
+        if(c==='"'){ if(text[i+1]==='"'){ cell+='"'; i++; } else inQuotes=false; }
+        else cell+=c;
+      }else{
+        if(c==='"') inQuotes=true;
+        else if(c===','){ row.push(cell); cell=''; }
+        else if(c==='\n'){ row.push(cell); rows.push(row); row=[]; cell=''; }
+        else if(c==='\r'){ /* skip */ }
+        else cell+=c;
+      }
+    }
+    if(cell.length || row.length){ row.push(cell); rows.push(row); }
+    return rows.filter(r=> r.length>1 || (r[0]&&r[0].trim()!==''));
+  },
+  download(filename, content){
+    const blob = new Blob(['\ufeff'+content], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+};
+
+Actions.exportStaffCSV = function(){
+  const ym = App.state.selectedYM;
+  const { byStaff } = App.getCumulativeAgg(ym);
+  const rows = [['이름','상태','담당매장','담당구분','입사일',`누적그룹(~${ym||'-'})`,'누적행사일수','누적평균달성률(%)','16만원미만횟수','16만원미만비율(%)','목표미달횟수','목표미달비율(%)','목표달성률(%)','충성고객수']];
+  App.db.staff.forEach(s=>{
+    const goals = s.goals||[]; const gr = goals.length? Math.round(goals.filter(x=>x.done).length/goals.length*100):0;
+    const a = byStaff[s.name] || {days:0,avgRate:0,under16Count:0,under16Pct:0,missCount:0,missPct:0,group:'제외'};
+    rows.push([s.name, s.status||'활동중', s.store||'', s.type||'', s.hireDate||'', a.group, a.days, a.avgRate, a.under16Count, a.under16Pct, a.missCount, a.missPct, gr, (s.customers||[]).length]);
+  });
+  App.csv.download(`행사자목록_${App.util.todayStr()}.csv`, App.csv.toCSV(rows));
+  App.util.toast('CSV 파일이 다운로드되었습니다');
+};
+
+Actions.exportPerformanceCSV = function(){
+  const rows = [['이름','월','행사일수(그달)','평균달성률(그달,%)','16만원미만횟수','16만원미만비율(%)','목표미달횟수','목표미달비율(%)','누적평균달성률(%)','누적그룹']];
+  App.db.staff.forEach(s=>{
+    App._allYMs.forEach(mk=>{
+      const a = App.getStaffAgg(s.name, mk);
+      if(a.days>0){
+        const cum = App.getStaffCumulativeAgg(s.name, mk);
+        rows.push([s.name, mk, a.days, a.avgRate, a.under16Count, a.under16Pct, a.missCount, a.missPct, cum.avgRate, cum.group]);
+      }
+    });
+  });
+  App.csv.download(`월별성과_${App.util.todayStr()}.csv`, App.csv.toCSV(rows));
+  App.util.toast('CSV 파일이 다운로드되었습니다');
+};
+
+Actions.importStaffCSV = function(file){
+  if(!file) return;
+  const fname = file.name.toLowerCase();
+  const isExcel = fname.endsWith('.xlsx') || fname.endsWith('.xls');
+
+  if(isExcel){
+    if(typeof XLSX === 'undefined'){
+      App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, {type:'array'});
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(sheet, {defval:''});
+        const rows = json.map(row=>[
+          row['이름'] ?? row['name'] ?? '',
+          row['담당매장'] ?? row['store'] ?? '',
+          row['담당구분'] ?? row['type'] ?? '',
+          row['입사일'] ?? row['hireDate'] ?? ''
+        ]);
+        Actions._mergeStaffRows(rows);
+      }catch(err){ console.error(err); App.util.toast('엑셀 파일을 읽는 중 오류가 발생했습니다'); }
+    };
+    reader.readAsArrayBuffer(file);
+  }else{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const rows = App.csv.parseCSV(e.target.result);
+        rows.shift(); 
+        Actions._mergeStaffRows(rows);
+      }catch(err){ console.error(err); App.util.toast('CSV 파일을 읽는 중 오류가 발생했습니다'); }
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+};
+
+Actions._mergeStaffRows = function(rows){
+  let added=0, updated=0;
+  rows.forEach(r=>{
+    const name = r[0], store = r[1], type = r[2], hireDate = r[3];
+    if(!name || !String(name).trim()) return;
+    const nameTrim = String(name).trim();
+    let s = App.db.staff.find(x=>x.name===nameTrim);
+    if(s){ s.store=store||s.store; s.type=type||s.type; s.hireDate=hireDate||s.hireDate; updated++; }
+    else{
+      App.db.staff.push({id:App.uid('staff'), name:nameTrim, store:store||'', type:type||'정규', status:'활동중', hireDate:hireDate||'',
+        createdAt:App.util.todayStr(), goals:[], customers:[], memos:[], visitLogs:[]});
+      added++;
+    }
+  });
+  App.save();
+  App.util.toast(`불러오기 완료: 추가 ${added}건, 갱신 ${updated}건`);
+  UI.render();
+};
+
+Actions.exportFullBackup = function(){
+  const json = JSON.stringify(App.db, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download = `promoter_backup_${App.util.todayStr()}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  App.db.meta.lastBackup = App.util.todayStr();
+  App.save();
+  App.util.toast('백업 파일이 다운로드되었습니다');
+};
+
+Actions.importFullBackup = function(file){
+  if(!file) return;
+  Actions.confirm('전체 백업을 복원하면 현재 데이터가 모두 대체됩니다. 계속할까요?', ()=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = JSON.parse(e.target.result);
+        if(!data.staff) throw new Error('형식이 올바르지 않습니다');
+        App.db = data; App.save(); App.util.toast('복원이 완료되었습니다'); UI.render();
+      }catch(err){ console.error(err); App.util.toast('백업 파일을 읽는 중 오류가 발생했습니다'); }
+    };
+    reader.readAsText(file, 'UTF-8');
+  });
+};
+
+Actions.resetAllData = function(){
+  Actions.confirm('정말로 모든 데이터를 초기화하시겠습니까? (클라우드도 삭제됨) 이 작업은 되돌릴 수 없습니다.', ()=>{
+    App.db = App.defaultDB(); App.save(); App.util.toast('초기화되었습니다'); App.navigate('dashboard');
+  });
+};
+
+/* =========================================================================
+   9-A. 실적 엑셀 Import (품목 파싱 추가)
+   ========================================================================= */
+App.recordColumns = [
+  {key:'staffName',        headers:['행사자이름','행사자명','이름']},
+  {key:'target',           headers:['목표']},
+  {key:'totalSales',       headers:['총판매금액','판매금액']},
+  {key:'achievementRate',  headers:['달성률']},
+  {key:'year',             headers:['YEAR','year','Year']},
+  {key:'month',            headers:['MONTH','month','Month']},
+  {key:'item1',            headers:['품목군1','품목1']},
+  {key:'qty1',             headers:['판매수량1','수량1']},
+  {key:'item2',            headers:['품목군2','품목2']},
+  {key:'qty2',             headers:['판매수량2','수량2']},
+  {key:'item3',            headers:['품목군3','품목3']},
+  {key:'qty3',             headers:['판매수량3','수량3']}
+];
+
+App._buildRecordColumnMap = function(headerRow){
+  const map = {}; 
+  headerRow.forEach((h,idx)=>{
+    const nh = App.util.normalizeHeaderStr(h);
+    if(!nh) return;
+    for(const col of App.recordColumns){
+      if(col.headers.some(alias=>App.util.normalizeHeaderStr(alias)===nh)){
+        map[idx] = col.key;
+        break;
+      }
+    }
+  });
+  return map;
+};
+
+Actions._detectRecordHeaderRow = function(rawRows){
+  const scanLimit = Math.min(10, rawRows.length);
+  let bestIdx = -1, bestScore = 0;
+  for(let i=0;i<scanLimit;i++){
+    const row = (rawRows[i]||[]).map(c=>String(c||''));
+    const score = Object.keys(App._buildRecordColumnMap(row)).length;
+    if(score > bestScore){ bestScore = score; bestIdx = i; }
+  }
+  return bestScore>=2 ? bestIdx : -1;
+};
+
+Actions.importRecordsExcel = function(file){
+  if(!file) return;
+  const fname = file.name.toLowerCase();
+  if(!(fname.endsWith('.xlsx') || fname.endsWith('.xls'))){
+    App.util.toast('엑셀(.xlsx) 파일만 업로드할 수 있습니다');
+    return;
+  }
+  if(typeof XLSX === 'undefined'){
+    App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type:'array', cellDates:true });
+      let allRows = [];
+      const errors = [];
+      const sheetReport = [];
+
+      workbook.SheetNames.forEach(sheetName=>{
+        const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header:1, defval:'', raw:true });
+        const headerIdx = Actions._detectRecordHeaderRow(rawRows);
+        if(headerIdx===-1) return; 
+
+        const headerRow = rawRows[headerIdx].map(h=>String(h||''));
+        const colMap = App._buildRecordColumnMap(headerRow);
+        let sheetCount = 0;
+
+        rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
+          if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; 
+
+          const raw = {};
+          Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
+
+          const staffName = String(raw.staffName||'').trim();
+          if(!staffName) return; 
+
+          // [수정] 엑셀에서 연도가 잘못 쳐졌을 때의 방어 로직 추가
+          let year = parseInt(String(raw.year).replace(/[^0-9]/g,''), 10);
+          if (year < 2000) {
+            if (year === 2 || year === 26) year = 2026;
+            else if (year >= 20 && year <= 99) year = 2000 + year;
+            else year = 2026;
+          }
+
+          const month = parseInt(raw.month, 10);
+          if(!year || !month || month<1 || month>12){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: YEAR/MONTH를 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
+            return;
+          }
+
+          const target = App.util.parseNumberLoose(raw.target);
+          const totalSales = App.util.parseNumberLoose(raw.totalSales);
+          const rate = App.util.parseAchievementRate(raw.achievementRate);
+          if(rate===null || rate===undefined){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 달성률 값을 인식할 수 없어 건너뜀 (행사자: ${staffName})`);
+            return;
+          }
+
+          // [수정] 품목군1~3 데이터 담기
+          let items = {};
+          const addItem = (itemStr, qtyStr) => {
+              if (itemStr && String(itemStr).trim()) {
+                  let q = App.util.parseNumberLoose(qtyStr);
+                  if (q > 0) items[String(itemStr).trim()] = (items[String(itemStr).trim()] || 0) + q;
+              }
+          };
+          addItem(raw.item1, raw.qty1);
+          addItem(raw.item2, raw.qty2);
+          addItem(raw.item3, raw.qty3);
+
+          allRows.push({
+            id: App.uid('rec'),
+            staffName, year, month, ym: `${year}-${String(month).padStart(2,'0')}`,
+            target, totalSales, achievementRate: rate, items
+          });
+          sheetCount++;
+        });
+
+        if(sheetCount>0) sheetReport.push({ sheetName, count:sheetCount });
+      });
+
+      if(allRows.length===0){
+        App.util.toast('엑셀에서 유효한 데이터를 찾지 못했습니다. 컬럼명(행사자이름/목표/총판매금액/달성률/YEAR/MONTH 등)을 확인해주세요.');
+        return;
+      }
+
+      Actions._mergeRecordsByMonth(allRows, sheetReport, errors);
+    }catch(err){
+      console.error(err);
+      App.util.toast('엑셀 파일을 처리하는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+Actions._mergeRecordsByMonth = function(newRows, sheetReport, errors){
+  const ymGroups = {};
+  newRows.forEach(r=>{ if(!ymGroups[r.ym]) ymGroups[r.ym]=[]; ymGroups[r.ym].push(r); });
+
+  const summary = [];
+  let updatedMonths = 0, newMonths = 0;
+
+  Object.keys(ymGroups).sort().forEach(ym=>{
+    const isExisting = App.db.records.some(r=>r.ym===ym);
+    App.db.records = App.db.records.filter(r=>r.ym!==ym); 
+    App.db.records.push(...ymGroups[ym]);                  
+    summary.push({ ym, count: ymGroups[ym].length, isUpdate: isExisting });
+    if(isExisting) updatedMonths++; else newMonths++;
+  });
+
+  const existingNames = new Set(App.db.staff.map(s=>s.name));
+  const newNames = new Set();
+  newRows.forEach(r=>{ if(!existingNames.has(r.staffName)) newNames.add(r.staffName); });
+  newNames.forEach(name=>{
+    App.db.staff.push({
+      id: App.uid('staff'), name, store:'', type:'정규', status:'활동중', hireDate:'', createdAt: App.util.todayStr(),
+      goals:[], customers:[], memos:[], visitLogs:[]
+    });
+  });
+
+  App._rebuildRecordIndex();
+  App.invalidateAggCache();
+  App.save();
+
+  Actions._showImportSummary(summary, sheetReport, updatedMonths, newMonths, errors);
+  UI.render();
+};
+
+Actions._showImportSummary = function(summary, sheetReport, updatedMonths, newMonths, errors){
+  const lines = summary.map(s=>`${s.ym} : ${s.count}건 ${s.isUpdate?'업데이트':'신규'} Import 완료`).join('\n');
+  const total = summary.reduce((a,s)=>a+s.count,0);
+  const msg = `${lines}\n\n총 ${total}건 Import 완료\n신규 월: ${newMonths}개월\n업데이트 월: ${updatedMonths}개월`;
+
+  const sheetLines = sheetReport.map(s=>`${s.sheetName} 시트: ${s.count}행 인식`).join('\n');
+  const sheetHtml = sheetLines ? `<div style="margin-top:14px;">
+      <div style="font-weight:800;margin-bottom:6px;">시트별 인식 결과</div>
+      <div class="report-box" style="font-size:12.5px;white-space:pre-wrap;">${App.util.esc(sheetLines)}</div>
+    </div>` : '';
+
+  let errHtml = '';
+  if(errors.length){
+    const shown = errors.slice(0,30);
+    errHtml = `<div style="margin-top:14px;">
+      <div style="font-weight:800;color:var(--improve);margin-bottom:6px;">건너뛴 행 / 오류 (${errors.length}건)</div>
+      <div class="report-box" style="max-height:180px;overflow-y:auto;font-size:12.5px;">
+        ${shown.map(e=>App.util.esc(e)).join('<br>')}${errors.length>30? `<br>...외 ${errors.length-30}건` : ''}
+      </div>
+    </div>`;
+  }
+
+  UI.openModal(`
+    <h2>엑셀 Import 완료</h2>
+    <div class="report-box" style="white-space:pre-wrap;">${App.util.esc(msg)}</div>
+    ${sheetHtml}
+    ${errHtml}
+    <div class="modal-actions"><button class="btn primary" onclick="UI.closeModal()">확인</button></div>`);
+};
+
+Actions.exportRecordsExcel = function(){
+  if(typeof XLSX === 'undefined'){
+    App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+    return;
+  }
+  if(App.db.records.length===0){
+    App.util.toast('내보낼 실적 데이터가 없습니다');
+    return;
+  }
+  const sheetData = App.db.records
+    .slice()
+    .sort((a,b)=> a.ym.localeCompare(b.ym) || a.staffName.localeCompare(b.staffName))
+    .map(r=>({
+      '행사자이름': r.staffName, '목표': r.target, '총판매금액': r.totalSales, '달성률': r.achievementRate,
+      'YEAR': r.year, 'MONTH': r.month
+    }));
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(sheetData);
+  XLSX.utils.book_append_sheet(wb, ws, '실적데이터');
+  XLSX.writeFile(wb, `실적데이터_${App.util.todayStr()}.xlsx`);
+  App.util.toast('엑셀 파일이 다운로드되었습니다');
+};
+
+
+/* =========================================================================
+   11. 활동일보 업로드
+   ========================================================================= */
+App.reportColumns = [
+  {key:'dept',              headers:['거래처DEPT','거래처 DEPT','DEPT','부서']},
+  {key:'managerName',       headers:['매니저명','매니저']},
+  {key:'visitDate',         headers:['방문일','방문일자','일자','날짜']},
+  {key:'directStore',       headers:['직거래처','거래처명','거래처']},
+  {key:'secondaryStore',    headers:['2차거래처명','2차거래처','2차점명','2차점']},
+  {key:'staffName',         headers:['사원명','행사자명','이름']},
+  {key:'managementSignal',  headers:['관리신호','신호']},
+  {key:'storeInventory',    headers:['매장재고','재고']},
+  {key:'tastingEvent',      headers:['시식행사','시식']},
+  {key:'managerAction',     headers:['매니저조치사항','조치사항']},
+  {key:'salesRequest',      headers:['영업요청사항','영업요청']},
+  {key:'safetyPrevention',  headers:['안전예방']},
+  {key:'storeEnvironment',  headers:['매장환경']}
+];
+
+App._buildReportColumnMap = function(headerRow){
+  const map = {};
+  headerRow.forEach((h,idx)=>{
+    const nh = App.util.normalizeHeaderStr(h);
+    if(!nh) return;
+    for(const col of App.reportColumns){
+      if(col.headers.some(alias=>App.util.normalizeHeaderStr(alias)===nh)){
+        map[idx] = col.key;
+        break;
+      }
+    }
+  });
+  return map;
+};
+
+Actions._detectReportHeaderRow = function(rawRows){
+  const scanLimit = Math.min(10, rawRows.length);
+  let bestIdx = -1, bestScore = 0;
+  for(let i=0;i<scanLimit;i++){
+    const row = (rawRows[i]||[]).map(c=>String(c||''));
+    const score = Object.keys(App._buildReportColumnMap(row)).length;
+    if(score > bestScore){ bestScore = score; bestIdx = i; }
+  }
+  return bestScore>=3 ? bestIdx : -1; 
+};
+
+App._reportKey = function(r){
+  return [r.visitDate||'', r.staffName||'', r.directStore||'', r.secondaryStore||'', r.managerName||''].join('|');
+};
+
+App.findStaffIdForReportName = function(rawName){
+  const name = String(rawName||'').trim();
+  if(!name) return null;
+  const exact = App.db.staff.find(x=>x.name===name);
+  if(exact) return exact.id;
+  if(App.db.nameAliasMap[name]){
+    const aliased = App.db.staff.find(x=>x.id===App.db.nameAliasMap[name]);
+    if(aliased) return aliased.id;
+  }
+  return null;
+};
+
+Views._reportStaging = null; 
+Views._reportListState = { tab:'list', q:'', store:'', manager:'', ym:'', signal:'' };
+Views._reportExpandedId = null;
+
+Actions.importActivityReportExcel = function(file){
+  if(!file) return;
+  const fname = file.name.toLowerCase();
+  if(!(fname.endsWith('.xlsx') || fname.endsWith('.xls'))){
+    App.util.toast('활동일보는 엑셀(.xlsx, .xls) 파일만 업로드할 수 있습니다');
+    return;
+  }
+  if(typeof XLSX === 'undefined'){
+    App.util.toast('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해주세요.');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type:'array', cellDates:true });
+
+      const rows = [];
+      const errors = [];
+
+      workbook.SheetNames.forEach(sheetName=>{
+        const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header:1, defval:'', raw:true });
+        const headerIdx = Actions._detectReportHeaderRow(rawRows);
+        if(headerIdx===-1) return; 
+
+        const headerRow = rawRows[headerIdx].map(h=>String(h||''));
+        const colMap = App._buildReportColumnMap(headerRow);
+
+        rawRows.slice(headerIdx+1).forEach((rowArr, rIdx)=>{
+          if(!rowArr || rowArr.every(c=>String(c).trim()==='')) return; 
+
+          const raw = {};
+          Object.keys(colMap).forEach(idx=>{ raw[colMap[idx]] = rowArr[idx]; });
+
+          const staffName = String(raw.staffName||'').trim();
+          if(!staffName){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 사원명이 비어있어 건너뜀`);
+            return;
+          }
+
+          let visitDate = App.util.normalizeExcelDate(raw.visitDate, null);
+          if(!visitDate){
+            errors.push(`[${sheetName}] ${headerIdx+rIdx+2}행: 방문일을 인식하지 못했습니다 (사원명: ${staffName}). 날짜 없이 기록됩니다.`);
+            visitDate = '';
+          }
+
+          const matchedStaffId = App.findStaffIdForReportName(staffName);
+
+          rows.push({
+            _tempId: App.uid('tmp'),
+            dept: String(raw.dept||'').trim(),
+            managerName: String(raw.managerName||'').trim(),
+            visitDate,
+            directStore: String(raw.directStore||'').trim(),
+            secondaryStore: String(raw.secondaryStore||'').trim(),
+            staffName,
+            matchedStaffId,
+            isMatched: !!matchedStaffId,
+            managementSignal: String(raw.managementSignal===undefined?'':raw.managementSignal).trim(),
+            storeInventory: String(raw.storeInventory===undefined?'':raw.storeInventory).trim(),
+            tastingEvent: String(raw.tastingEvent===undefined?'':raw.tastingEvent).trim(),
+            managerAction: String(raw.managerAction===undefined?'':raw.managerAction).trim(),
+            salesRequest: String(raw.salesRequest===undefined?'':raw.salesRequest).trim(),
+            safetyPrevention: String(raw.safetyPrevention===undefined?'':raw.safetyPrevention).trim(),
+            storeEnvironment: String(raw.storeEnvironment===undefined?'':raw.storeEnvironment).trim()
+          });
+        });
+      });
+
+      if(rows.length===0){
+        App.util.toast('엑셀에서 유효한 활동일보 데이터를 찾지 못했습니다. 컬럼명(사원명/방문일 등)을 확인해주세요.');
+        return;
+      }
+
+      rows.forEach(r=>{
+        const key = App._reportKey(r);
+        const existing = App.db.activityReports.find(x=>App._reportKey(x)===key);
+        if(!existing){ r._status = 'new'; }
+        else{
+          const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','storeEnvironment']
+            .every(f=> (existing[f]||'') === (r[f]||''));
+          r._status = fieldsSame ? 'duplicate' : 'update';
+        }
+      });
+
+      Views._reportStaging = { fileName: file.name, rows, errors };
+      App.navigate('reports');
+    }catch(err){
+      console.error(err);
+      App.util.toast('활동일보 엑셀을 처리하는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+};
+
+Actions.handleReportDrop = function(ev){
+  ev.preventDefault();
+  const dt = ev.dataTransfer;
+  if(dt && dt.files && dt.files.length){
+    Actions.importActivityReportExcel(dt.files[0]);
+  }
+};
+
+Actions.openMatchStaffModal = function(rawName, mode){
+  Views._matchPickerQuery = '';
+  Actions._renderMatchStaffModal(rawName, mode);
+};
+Actions._renderMatchStaffModal = function(rawName, mode){
+  const q = Views._matchPickerQuery||'';
+  const candidates = App.db.staff.filter(s=>!q || s.name.includes(q)).slice(0,50);
+  const listHtml = candidates.map(s=>
+    `<div class="item-row" style="cursor:pointer;" onclick="Actions.confirmMatchStaff('${App.util.esc(rawName).replace(/'/g,"\\'")}','${s.id}','${mode}')">
+      <div class="staff-avatar">${App.util.esc(s.name[0]||'?')}</div>
+      <div class="content"><div class="title">${App.util.esc(s.name)}</div><div class="meta">${App.util.esc(s.store||'-')}</div></div>
+    </div>`
+  ).join('') || `<div class="empty-state" style="padding:20px;"><div class="emoji">🔍</div>일치하는 행사자가 없습니다.</div>`;
+
+  UI.openModal(`
+    <h2>행사자 연결</h2>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">
+      활동일보 사원명 "<b>${App.util.esc(rawName)}</b>"을(를) 어떤 행사자와 연결할까요?<br>
+      한 번 연결하면 다음 업로드부터 자동으로 적용됩니다.
+    </p>
+    <input type="text" placeholder="행사자명 검색" value="${App.util.esc(q)}"
+      oninput="Views._matchPickerQuery=this.value;Actions._renderMatchStaffModal('${App.util.esc(rawName).replace(/'/g,"\\'")}','${mode}')" style="margin-bottom:10px;">
+    <div id="matchPickerList" style="max-height:320px;overflow-y:auto;">${listHtml}</div>
+    <div class="modal-actions"><button class="btn" onclick="UI.closeModal()">취소</button></div>`);
+};
+
+Actions.confirmMatchStaff = function(rawName, staffId, mode){
+  App.db.nameAliasMap[rawName] = staffId;
+  App.save();
+
+  if(mode==='staging' && Views._reportStaging){
+    Views._reportStaging.rows.forEach(r=>{
+      if(r.staffName===rawName){ r.matchedStaffId = staffId; r.isMatched = true; }
+    });
+  }else{
+    App.db.activityReports.forEach(r=>{
+      if(r.staffName===rawName){ r.matchedStaffId = staffId; r.isMatched = true; }
+    });
+    App.save();
+  }
+  UI.closeModal();
+  App.util.toast('행사자와 연결되었습니다');
+  UI.render();
+};
+
+Actions.commitActivityReports = function(){
+  const staging = Views._reportStaging;
+  if(!staging) return;
+
+  let added=0, updated=0, skipped=0, unmatched=0;
+  staging.rows.forEach(r=>{
+    const key = App._reportKey(r);
+    const existing = App.db.activityReports.find(x=>App._reportKey(x)===key);
+    if(!r.matchedStaffId) unmatched++;
+
+    if(existing){
+      const fieldsSame = ['managementSignal','storeInventory','tastingEvent','managerAction','salesRequest','safetyPrevention','storeEnvironment']
+        .every(f=> (existing[f]||'') === (r[f]||''));
+      if(fieldsSame){ skipped++; }
+      else{
+        Object.assign(existing, {
+          managementSignal:r.managementSignal, storeInventory:r.storeInventory, tastingEvent:r.tastingEvent,
+          managerAction:r.managerAction, salesRequest:r.salesRequest, safetyPrevention:r.safetyPrevention,
+          storeEnvironment:r.storeEnvironment, matchedStaffId:r.matchedStaffId, isMatched:r.isMatched,
+          dept:r.dept, managerName:r.managerName
+        });
+        updated++;
+      }
+    }else{
+      App.db.activityReports.push({
+        id: App.uid('report'),
+        dept:r.dept, managerName:r.managerName, visitDate:r.visitDate,
+        directStore:r.directStore, secondaryStore:r.secondaryStore, staffName:r.staffName,
+        matchedStaffId:r.matchedStaffId, managementSignal:r.managementSignal, storeInventory:r.storeInventory,
+        tastingEvent:r.tastingEvent, managerAction:r.managerAction, salesRequest:r.salesRequest,
+        safetyPrevention:r.safetyPrevention, storeEnvironment:r.storeEnvironment,
+        uploadedAt: App.util.todayStr(), sourceFile: staging.fileName, isMatched: r.isMatched
+      });
+      added++;
+    }
+  });
+
+  App.db.meta.lastActivityUpload = { fileName: staging.fileName, date: App.util.todayStr() };
+  App.save();
+
+  const total = staging.rows.length;
+  Views._reportStaging = null;
+
+  UI.openModal(`
+    <h2>활동일보 업로드 완료</h2>
+    <div class="report-box" style="white-space:pre-wrap;">✅ 전체 ${total}건
+✅ 신규 등록 ${added}건
+🔄 기존 데이터 업데이트 ${updated}건
+⏭️ 중복 제외 ${skipped}건
+⚠️ 행사자 매칭 필요 ${unmatched}건</div>
+    <div class="modal-actions">
+      ${unmatched? `<button class="btn" onclick="UI.closeModal();Views._reportListState.tab='unmatched';UI.render();">매칭 필요 데이터 확인</button>`:''}
+      <button class="btn primary" onclick="UI.closeModal();UI.render();">확인</button>
+    </div>`);
+};
+
+Actions.cancelReportStaging = function(){
+  Actions.confirm('업로드를 취소하시겠습니까? 미리보기 중인 데이터는 저장되지 않습니다.', ()=>{
+    Views._reportStaging = null;
+    UI.render();
+  });
+};
+
+/* ---- 활동일보 페이지 ---- */
+Views.activityReports = function(){
+  UI.setTitle('활동일보 업로드', '매니저 활동일보 엑셀을 업로드하면 행사자별로 자동 연동됩니다');
+
+  const lastUp = App.db.meta.lastActivityUpload;
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:8px;">📋 활동일보 엑셀 업로드</div>
+    <div id="reportDropZone" style="border:2px dashed var(--border);border-radius:var(--radius-sm);padding:22px;text-align:center;margin-bottom:12px;"
+      ondragover="event.preventDefault();" ondrop="Actions.handleReportDrop(event)">
+      <div style="font-size:13.5px;color:var(--text-secondary);margin-bottom:10px;">여기로 파일을 드래그하거나 아래에서 선택하세요 (.xlsx, .xls)</div>
+      <input type="file" accept=".xlsx,.xls" onchange="Actions.importActivityReportExcel(this.files[0]); this.value='';">
+    </div>
+    <div style="font-size:12.5px;color:var(--text-secondary);">
+      마지막 업로드: ${lastUp? `${App.util.esc(lastUp.fileName)} · ${lastUp.date}` : '없음'}
+    </div>
+  </div>`;
+
+  if(Views._reportStaging){
+    html += Views._reportPreviewHtml();
+    document.getElementById('view').innerHTML = html;
+    return;
+  }
+
+  const st = Views._reportListState;
+  const totalCount = App.db.activityReports.length;
+  const unmatchedNames = [...new Set(App.db.activityReports.filter(r=>!r.isMatched).map(r=>r.staffName))];
+
+  html += `<div class="tabs">
+    <div class="tab-btn ${st.tab==='list'?'active':''}" onclick="Views._reportListState.tab='list';UI.render()">전체 목록 <span class="cnt">${totalCount}</span></div>
+    <div class="tab-btn ${st.tab==='unmatched'?'active':''}" onclick="Views._reportListState.tab='unmatched';UI.render()">매칭 필요 <span class="cnt">${unmatchedNames.length}</span></div>
+  </div>`;
+
+  html += st.tab==='unmatched' ? Views._reportUnmatchedHtml() : Views._reportListHtml();
+
+  document.getElementById('view').innerHTML = html;
+};
+
+Views._reportPreviewHtml = function(){
+  const staging = Views._reportStaging;
+  const rows = staging.rows;
+  const total = rows.length;
+  const unmatchedNames = [...new Set(rows.filter(r=>!r.matchedStaffId).map(r=>r.staffName))];
+  const unmatchedCount = rows.filter(r=>!r.matchedStaffId).length;
+  const matchedCount = total - unmatchedCount;
+
+  let html = `<div class="card">
+    <div style="font-weight:800;margin-bottom:10px;">업로드 데이터 미리보기 — "${App.util.esc(staging.fileName)}"</div>
+    <div class="report-box" style="white-space:pre-wrap;">전체 활동일보 ${total}건
+
+✅ 행사자 자동 매칭 가능: ${matchedCount}건
+⚠️ 행사자 확인 필요: ${unmatchedCount}건</div>
+  </div>`;
+
+  if(unmatchedNames.length){
+    html += `<div class="section-title">⚠️ 매칭되지 않은 행사자 <span class="cnt">${unmatchedNames.length}</span></div>
+    <div class="card" style="padding:8px 12px;">`;
+    unmatchedNames.forEach(name=>{
+      const sample = rows.find(r=>r.staffName===name);
+      const cnt = rows.filter(r=>r.staffName===name).length;
+      html += `<div class="item-row">
+        <div class="content"><div class="title">${App.util.esc(name)} <span class="badge neutral">매칭 필요</span></div>
+          <div class="meta">${cnt}건 · 방문일 ${sample.visitDate||'-'} · ${App.util.esc(sample.directStore||'-')} ${App.util.esc(sample.secondaryStore||'')}</div></div>
+        <button class="btn sm" onclick="Actions.openMatchStaffModal('${App.util.esc(name).replace(/'/g,"\\'")}','staging')">행사자 연결</button>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  html += `<div class="section-title">미리보기 데이터</div>
+  <div class="card"><div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+    <th>방문일</th><th>사원명</th><th>매장명</th><th>관리신호</th><th>매니저조치사항</th>
+  </tr></thead><tbody>`;
+  rows.slice(0,50).forEach(r=>{
+    html += `<tr><td>${r.visitDate||'-'}</td><td>${App.util.esc(r.staffName)}${!r.matchedStaffId?' <span class="badge neutral">확인필요</span>':''}</td>
+      <td>${App.util.esc(r.directStore||'-')} ${App.util.esc(r.secondaryStore||'')}</td>
+      <td>${App.util.esc(r.managementSignal||'-')}</td>
+      <td>${App.util.esc((r.managerAction||'').slice(0,30))}</td></tr>`;
+  });
+  if(rows.length>50){
+    html += `<tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">외 ${rows.length-50}건...</td></tr>`;
+  }
+  html += '</tbody></table></div></div>';
+
+  if(staging.errors.length){
+    html += `<div class="section-title" style="color:var(--improve);">건너뛴 행 / 오류 <span class="cnt">${staging.errors.length}</span></div>
+    <div class="card"><div class="report-box" style="max-height:160px;overflow-y:auto;font-size:12.5px;">${staging.errors.map(e=>App.util.esc(e)).join('<br>')}</div></div>`;
+  }
+
+  html += `<div class="card" style="display:flex;gap:10px;justify-content:flex-end;">
+    <button class="btn" onclick="Actions.cancelReportStaging()">취소</button>
+    <button class="btn primary" onclick="Actions.commitActivityReports()">업로드하고 행사자 관리에 반영</button>
+  </div>`;
+  return html;
+};
+
+Views._reportListHtml = function(){
+  const st = Views._reportListState;
+  let list = App.db.activityReports.slice();
+
+  if(st.q.trim()) list = list.filter(r=>r.staffName.includes(st.q.trim()));
+
+  list.sort((a,b)=> (b.visitDate||'').localeCompare(a.visitDate||''));
+
+  let html = `<div class="card">
+    <div class="toolbar">
+      <input class="grow" type="text" placeholder="행사자명으로 검색" value="${App.util.esc(st.q)}" oninput="Views._reportListState.q=this.value;UI.render()">
+    </div>`;
+
+  if(list.length===0){
+    html += `<div class="empty-state"><div class="emoji">📋</div>조건에 맞는 활동일보가 없습니다.</div>`;
+  }else{
+    html += `<div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>방문일</th><th>사원명</th><th>매장</th><th>관리신호</th><th></th>
+    </tr></thead><tbody>`;
+    list.forEach(r=>{
+      const expanded = Views._reportExpandedId===r.id;
+      html += `<tr class="row" onclick="Views._reportExpandedId=Views._reportExpandedId==='${r.id}'?null:'${r.id}';UI.render()">
+        <td>${r.visitDate||'-'}</td>
+        <td>${App.util.esc(r.staffName)}${!r.isMatched?' <span class="badge neutral">매칭필요</span>':''}</td>
+        <td>${App.util.esc(r.directStore||'-')} ${App.util.esc(r.secondaryStore||'')}</td>
+        <td>${App.util.esc(r.managementSignal||'-')}</td>
+        <td>${expanded?'▲':'▼'}</td>
+      </tr>`;
+      if(expanded){
+        html += `<tr><td colspan="5" style="background:var(--bg-soft);">
+          <div style="padding:12px;font-size:13px;line-height:1.8;">
+            <b>매니저명:</b> ${App.util.esc(r.managerName||'-')}<br>
+            <b>매장재고:</b> ${App.util.esc(r.storeInventory||'-')}<br>
+            <b>시식행사:</b> ${App.util.esc(r.tastingEvent||'-')}<br>
+            <b>매니저조치사항:</b> ${App.util.esc(r.managerAction||'-')}<br>
+            <b>영업요청사항:</b> ${App.util.esc(r.salesRequest||'-')}<br>
+            <b>안전예방:</b> ${App.util.esc(r.safetyPrevention||'-')}<br>
+            <b>매장환경:</b> ${App.util.esc(r.storeEnvironment||'-')}<br>
+            <b>거래처DEPT:</b> ${App.util.esc(r.dept||'-')}
+          </div></td></tr>`;
+      }
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  return html;
+};
+
+Views._reportUnmatchedHtml = function(){
+  const unmatched = App.db.activityReports.filter(r=>!r.isMatched);
+  const names = [...new Set(unmatched.map(r=>r.staffName))];
+  let html = '<div class="card">';
+  if(names.length===0){
+    html += `<div class="empty-state"><div class="emoji">✅</div>매칭이 필요한 활동일보가 없습니다.</div>`;
+  }else{
+    html += `<div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+      <th>활동일보 사원명</th><th>건수</th><th>최근 방문일</th><th>매장</th><th>상태</th><th></th>
+    </tr></thead><tbody>`;
+    names.forEach(name=>{
+      const recs = unmatched.filter(r=>r.staffName===name).sort((a,b)=>(b.visitDate||'').localeCompare(a.visitDate||''));
+      const latest = recs[0];
+      html += `<tr><td>${App.util.esc(name)}</td><td>${recs.length}건</td><td>${latest.visitDate||'-'}</td>
+        <td>${App.util.esc(latest.directStore||'-')} ${App.util.esc(latest.secondaryStore||'')}</td>
+        <td><span class="badge neutral">매칭 필요</span></td>
+        <td><button class="btn sm" onclick="Actions.openMatchStaffModal('${App.util.esc(name).replace(/'/g,"\\'")}','committed')">행사자 연결</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  html += '</div>';
+  return html;
+};
+
+/* -- 행사자 상세: 활동일보 탭 -- */
+Views._tabActivityReport = function(s){
+  const reports = App.db.activityReports.filter(r=>r.matchedStaffId===s.id)
+    .sort((a,b)=>(b.visitDate||'').localeCompare(a.visitDate||''));
+
+  let html = '';
+  if(reports.length===0){
+    return `<div class="card empty-state"><div class="emoji">📋</div>이 행사자에게 연결된 활동일보가 없습니다.</div>`;
+  }
+
+  const latest = reports[0];
+  html += `<div class="card">
+    <div style="font-weight:800;margin-bottom:10px;">최근 활동 정보</div>
+    <div style="font-size:13.5px;line-height:2;">
+      <b>최근 활동일:</b> ${latest.visitDate||'-'}<br>
+      <b>최근 방문매장:</b> ${App.util.esc(latest.directStore||'-')} ${App.util.esc(latest.secondaryStore||'')}<br>
+      ${latest.managementSignal? `<b>최근 관리신호:</b> ${App.util.esc(latest.managementSignal)}`:''}
+    </div>
+  </div>`;
+
+  html += `<div class="section-title">📋 활동일보 이력 <span class="cnt">${reports.length}</span></div>
+  <div class="card"><div style="overflow-x:auto;"><table class="staff-table"><thead><tr>
+    <th>방문일</th><th>매장</th><th>관리신호</th><th>매니저조치사항</th><th></th>
+  </tr></thead><tbody>`;
+  reports.forEach(r=>{
+    const expanded = Views._reportExpandedId===r.id;
+    html += `<tr class="row" onclick="Views._reportExpandedId=Views._reportExpandedId==='${r.id}'?null:'${r.id}';UI.render()">
+      <td>${r.visitDate||'-'}</td><td>${App.util.esc(r.directStore||'-')} ${App.util.esc(r.secondaryStore||'')}</td>
+      <td>${App.util.esc(r.managementSignal||'-')}</td>
+      <td>${App.util.esc((r.managerAction||'').slice(0,30))}</td><td>${expanded?'▲':'▼'}</td></tr>`;
+    if(expanded){
+      html += `<tr><td colspan="5" style="background:var(--bg-soft);"><div style="padding:12px;font-size:13px;line-height:1.8;">
+        <b>매장재고:</b> ${App.util.esc(r.storeInventory||'-')}<br>
+        <b>시식행사:</b> ${App.util.esc(r.tastingEvent||'-')}<br>
+        <b>매니저조치사항:</b> ${App.util.esc(r.managerAction||'-')}<br>
+        <b>영업요청사항:</b> ${App.util.esc(r.salesRequest||'-')}<br>
+        <b>안전예방:</b> ${App.util.esc(r.safetyPrevention||'-')}<br>
+        <b>매장환경:</b> ${App.util.esc(r.storeEnvironment||'-')}<br>
+        <b>매니저명:</b> ${App.util.esc(r.managerName||'-')}
+      </div></td></tr>`;
+    }
+  });
+  html += '</tbody></table></div></div>';
+  return html;
+};
+
+/* ------------------------- 10. 시작 ------------------------- */
+UI.init();
+
+</script>
+</body>
+</html>
